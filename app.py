@@ -8,6 +8,14 @@ import plotly.express as px
 import streamlit as st
 
 from portfolio.config import load_config
+from portfolio.mutations import (
+    ValidationError,
+    add_category_ticker,
+    record_transaction,
+    set_cash,
+    set_category_tickers,
+    set_target_weights,
+)
 from portfolio.positions import compute_positions, enrich_transactions_with_eur
 from portfolio.prices import fetch_fx_eur, fetch_historical_fx_eur, fetch_prices
 from portfolio.rebalance import compute_rebalance
@@ -15,6 +23,8 @@ from portfolio.transactions import load_transactions
 from portfolio.valuation import value_positions
 
 DATA = Path("data")
+CONFIG_PATH = DATA / "config.yaml"
+TX_PATH = DATA / "transactions.csv"
 
 
 @st.cache_data(ttl=60)
@@ -25,6 +35,13 @@ def _cached_prices(tickers: tuple[str, ...]) -> dict[str, float]:
 @st.cache_data(ttl=60)
 def _cached_fx(currencies: tuple[str, ...]) -> dict[str, float]:
     return fetch_fx_eur(list(currencies))
+
+
+def _after_write() -> None:
+    _cached_prices.clear()
+    _cached_fx.clear()
+    st.toast("Saved", icon="✅")
+    st.rerun()
 
 
 def main() -> None:
@@ -39,14 +56,17 @@ def main() -> None:
         "Drift threshold (%)", min_value=0.0, max_value=5.0, value=1.0, step=0.1
     )
 
-    config = load_config(DATA / "config.yaml")
-    tx_df = load_transactions(DATA / "transactions.csv")
+    config = load_config(CONFIG_PATH)
+    tx_df = load_transactions(TX_PATH)
     orphans = sorted(set(tx_df["ticker"]) - config.all_tickers())
     if orphans:
         st.error(f"Transaction tickers not in config: {orphans}. Run `portfolio check`.")
         st.stop()
     enriched = enrich_transactions_with_eur(tx_df, fetch_historical_fx_eur)
     positions = compute_positions(enriched)
+
+    with st.sidebar.expander("Edit", expanded=False):
+        _render_edit_forms(config, positions)
 
     tickers = tuple(sorted(p.ticker for p in positions))
     currencies = tuple(sorted({p.currency for p in positions} | {"EUR"}))
@@ -153,6 +173,77 @@ def _render_pnl_and_rebalance(valued, config, drift_threshold_pct: float) -> Non
                 "Action": action_text,
             })
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+
+def _render_edit_forms(config, positions) -> None:
+    _render_buy_form(config)
+    st.divider()
+    _render_sell_form(positions)
+    st.divider()
+    _render_cash_form(config)
+    st.divider()
+    _render_targets_form(config)
+    st.divider()
+    _render_tickers_form(config)
+
+
+def _render_buy_form(config) -> None:
+    st.caption("Record buy")
+    tickers = sorted(config.all_tickers())
+    options = tickers + ["other…"]
+    with st.form("buy_form", clear_on_submit=True):
+        tx_date = st.date_input("Date", value=datetime.now().date(), key="buy_date")
+        choice = st.selectbox("Ticker", options, key="buy_ticker")
+        new_ticker = ""
+        new_category = ""
+        if choice == "other…":
+            new_ticker = st.text_input("New ticker", key="buy_new_ticker")
+            new_category = st.selectbox(
+                "Category", sorted(config.categories.keys()), key="buy_new_cat"
+            )
+        quantity = st.number_input("Quantity", min_value=0.0, step=1.0, key="buy_qty")
+        price = st.number_input("Price", min_value=0.0, step=0.01, key="buy_price")
+        currency = st.selectbox("Currency", ["EUR", "USD"], key="buy_currency")
+        submitted = st.form_submit_button("Record buy")
+
+    if not submitted:
+        return
+    try:
+        ticker = new_ticker.strip() if choice == "other…" else choice
+        if choice == "other…":
+            if not ticker:
+                raise ValidationError("ticker is required")
+            add_category_ticker(CONFIG_PATH, new_category, ticker)
+        record_transaction(
+            tx_path=TX_PATH,
+            config_path=CONFIG_PATH,
+            tx_date=tx_date,
+            ticker=ticker,
+            action="buy",
+            quantity=quantity,
+            price=price,
+            currency=currency,
+        )
+    except ValidationError as e:
+        st.error(str(e))
+        return
+    _after_write()
+
+
+def _render_sell_form(positions) -> None:
+    st.caption("Record sell (coming in Task 7)")
+
+
+def _render_cash_form(config) -> None:
+    st.caption("Edit cash (coming in Task 8)")
+
+
+def _render_targets_form(config) -> None:
+    st.caption("Edit targets (coming in Task 9)")
+
+
+def _render_tickers_form(config) -> None:
+    st.caption("Edit tickers (coming in Task 10)")
 
 
 if __name__ == "__main__":
