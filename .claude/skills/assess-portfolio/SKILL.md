@@ -1,6 +1,6 @@
 ---
 name: assess-portfolio
-description: Use when the user asks about their portfolio state, whether to rebalance, how their holdings are doing, whether their allocation has drifted, or wants a financial snapshot of their Trade Republic portfolio. Runs the repo's `portfolio` CLI and produces a structured assessment against the user's own target weights.
+description: Use when the user asks about their portfolio — state, drift, rebalancing, P&L, adding/selling positions, editing targets or cash balance, swapping tickers, or troubleshooting CLI errors. Wraps the `portfolio` CLI of this repo with a structured assessment template and reference docs for every common task.
 ---
 
 # Assess Portfolio
@@ -9,94 +9,108 @@ description: Use when the user asks about their portfolio state, whether to reba
 
 Trigger on any of:
 
-- "How's my portfolio doing?"
-- "Should I rebalance?"
-- "What's my current allocation?"
-- "Any drift from my targets?"
-- "Assess my portfolio"
+- "How's my portfolio doing?" / "Any drift from my targets?" / "Should I rebalance?"
+- "Add a buy for X" / "Record that I sold Y" / "I deposited €500"
+- "Change my target weight for bonds" / "Add a new category"
+- "My ticker shows no price" / "CLI gave me this error"
 - Explicit `/assess-portfolio` invocation
 
 ## What this skill does NOT do
 
-This skill **does not give open-ended investment advice**. It does not recommend buying a specific stock, predict prices, or second-guess the user's strategy. It strictly *interprets* the user's own `data/config.yaml` (the targets they set) against `portfolio show` (their current state) and reports what it finds.
+**No open-ended investment advice.** This skill does not recommend specific stocks, predict prices, or second-guess the user's strategy. It strictly interprets the user's own `data/config.yaml` (the targets they set) against `portfolio show` (their current state) and reports what it finds.
 
-If the user asks questions that require actual financial judgment ("should I buy Nvidia?", "is now a good time to sell bonds?"), decline politely and suggest they consult a licensed financial advisor. Run this skill only for the assessment itself.
+If the user asks for actual financial judgment ("should I buy Nvidia?", "is now a good time to sell bonds?"), decline politely and suggest a licensed financial advisor.
 
-## Process
+## Resources
 
-### Step 1 — Run the CLI
+### Scripts (in `scripts/`)
+- `snapshot.sh` — emits a structured JSON snapshot (positions, totals, rebalance). **Prefer this over parsing `portfolio show` text** for agent reasoning. Usage: `./.claude/skills/assess-portfolio/scripts/snapshot.sh`
+- `snapshot.py` — the Python source behind `snapshot.sh`, with the JSON shape documented at the top
+- `add-transaction.sh` — thin wrapper for `add-buy` / `add-sell` with action-argument convenience. Usage: `./.claude/skills/assess-portfolio/scripts/add-transaction.sh buy VWCE.DE 10 98.50`
 
-From the repo root (`/Users/huijokim/personal/finance`):
+### References (in `references/`) — read on-demand based on the user's request
+- `cli-reference.md` — exhaustive docs for every `portfolio` subcommand, flags, exit codes, examples. Load when the user asks about a specific command.
+- `data-schema.md` — `transactions.csv` and `config.yaml` schemas, validation rules, ticker selection guidance. Load when the user is editing data files or picking tickers.
+- `recipes.md` — step-by-step recipes for common tasks (add ticker, rename category, swap delisted ticker, update cash balance, scenario dry-runs). Load when the user wants to make a change.
+- `troubleshooting.md` — error dictionary with meaning + fix for every validation error, yfinance error, and Streamlit issue. Load when the user pastes an error.
+
+## Process: assessment requests
+
+For any "how's it going / should I rebalance" question:
+
+### Step 1 — Get structured data
+
+Run from the repo root (`/Users/huijokim/personal/finance`):
 
 ```bash
-uv run portfolio show
+./.claude/skills/assess-portfolio/scripts/snapshot.sh
 ```
 
-This prints two tables: current positions (ticker, qty, avg cost, live price, value, P&L) and category drift (current %, target %, delta EUR).
+This returns a JSON object with `totals`, `positions`, `unpriced_tickers`, and `rebalance` — all numbers pre-computed, no text parsing.
 
-If `portfolio show` fails (network, yfinance, missing data), first run `uv run portfolio check` to rule out config/transaction issues, then report the error to the user clearly — don't fabricate numbers.
+If the script fails, `cat` the stderr and consult `references/troubleshooting.md` for the fix, then either fix and retry or explain to the user what's broken.
 
 ### Step 2 — Read the config
 
-Read `data/config.yaml` to understand the user's target structure (categories, target weights, cash balance). You need this for context, especially to know whether any category has no target (shouldn't happen after `check` passes).
+`cat data/config.yaml` to understand the target structure. You need it for context — the snapshot has the numbers but not the user's intent (e.g., why three separate equity categories).
 
 ### Step 3 — Produce the assessment
 
-Structure the response as **four short sections**, in this order. Keep each section to 3–5 lines maximum.
+Structure the response as **four short sections**, in this order. 3–5 lines per section.
 
-#### A. Snapshot (one paragraph)
+**A. Snapshot (one paragraph)**
 
 - Total market value (EUR, including cash)
 - Total P&L (EUR + %)
 - Cash weight vs. target
-- Number of priced vs. unpriced positions (warn if any position's price came back NaN)
+- Number of priced vs. unpriced positions (warn if `unpriced_tickers` is non-empty)
 
-#### B. Concentration observations
+**B. Concentration observations**
 
-- Largest single position as % of total (flag if >15% — common personal-investing heuristic)
-- Any category whose weight exceeds target by more than 5pp or is less than half its target
-- Currency exposure (EUR vs. USD weight) — flag if user's cost basis is in one currency but market value has drifted materially into another
+- Largest single position as % of total (flag if >15% and the ticker is not itself a diversified ETF)
+- Any category with drift >5pp or less than half its target
+- Currency exposure (EUR vs. USD)
+- **Look-through overlap:** if the user holds both a global-equity ETF (VWCE / IWDA) AND a US-equity bucket, note that their effective US weight is higher than the category table shows (MSCI World is ~70% US)
 
-#### C. Drift vs. target (per category)
+**C. Drift vs. target (per category)**
 
-For each category in the drift table:
+Use the `rebalance` array from the snapshot directly — don't recompute. For each entry:
 
-- If `|current − target| < 1pp`: report as on-target
-- If `1pp ≤ |drift| < 3pp`: note the drift, no action needed yet
-- If `|drift| ≥ 3pp`: recommend the rebalancing action already printed by the CLI (Buy €X / Sell €X), calling out which direction
+- `|drift_pp| < 1`: report as on-target
+- `1 ≤ |drift_pp| < 3`: note the drift, no action needed yet
+- `|drift_pp| ≥ 3`: recommend the action, quoting the exact `delta_eur` ("Buy €X" if positive, "Sell €X" if negative)
 
-Use the `delta_eur` values from `portfolio show` directly — do not recompute.
+**D. Process suggestions (optional, ≤2 bullets)**
 
-#### D. Process suggestions (optional, only if relevant)
+Concrete, interpretive observations — not predictions. Examples:
+- "IUSA.AS and VUSA.AS are both distributing S&P 500 ETFs — consolidating saves you per-order fees"
+- "EUNA.DE has no live price — swap to a ticker yfinance quotes (see `recipes.md` → swap a delisted ticker)"
 
-At most two bullets. Examples:
+Never speculate about market direction, macro, or specific stock picks.
 
-- "AGGH.DE has no live price from yfinance — you may want to swap it for a ticker Yahoo actually quotes (iShares Core Global Aggregate Bond UCITS alternatives: AGGG.L, EUNA.DE)."
-- "Your cash weight is 2x the target — consider deploying it into the underweight `global-equity` category."
+End with one short disclosure: "Numbers above are from a live yfinance fetch at {timestamp} and reflect your config as of this reading."
 
-Do NOT speculate about market direction, macroeconomic conditions, or specific stock picks.
+## Process: mutation requests
+
+For "add a buy", "change a target", "rename a category", etc.:
+
+1. Load `references/recipes.md` and follow the matching recipe.
+2. If the user's request doesn't match any recipe exactly, load `references/cli-reference.md` and/or `references/data-schema.md` as appropriate.
+3. Always run `uv run portfolio check` after the mutation and report the result.
+4. If they asked for a change that affects valuation (new ticker, new weights), consider offering to also run the snapshot and show how the change affected drift.
+
+## Process: error troubleshooting
+
+If the user pastes a CLI error:
+
+1. Load `references/troubleshooting.md`.
+2. Match the error text to an entry.
+3. Apply the listed fix (either directly, or by guiding the user through the edit).
+4. Verify with `uv run portfolio check` and confirm success.
 
 ## Output style
 
 - Terse, quantitative, scannable
-- Include concrete EUR amounts from the CLI output, not percentages alone
-- Do not re-print the full position table — the user has just seen it (or will see it in the tool output)
-- Do not add disclaimers to every section; one closing sentence is enough: "Numbers above are from a live yfinance fetch at {timestamp} and reflect your config as of this reading."
-
-## Example response shape
-
-> **Snapshot.** €5,842 total value (€1,250 cash). P&L +€1,346 (+30.1%) on €4,476 cost basis. 4 of 5 positions priced; `AGGH.DE` had no quote.
->
-> **Concentration.** Largest position: VWCE.DE at 26% of total — within the 15% single-name flag threshold when measured against a category-diversified ETF, so not worth flagging. US-equity sitting at 28% vs 15% target is the main concentration issue.
->
-> **Drift vs. target.**
-> - global-equity: 50% (target 70%) — **underweight by 20pp**, CLI suggests Buy €1,153
-> - us-equity: 28% (target 15%) — **overweight by 13pp**, CLI suggests Sell €780
-> - bonds: 0% (target 10%) — missing entirely (see unpriced ticker below), Buy €584 once ticker is fixed
-> - cash: 21% (target 5%) — **overweight by 16pp**, deploy into global-equity
->
-> **Process suggestions.**
-> - `AGGH.DE` is delisted on yfinance; swap for a bond ETF Yahoo quotes (e.g. `AGGG.L`) so the dashboard and rebalance math stop excluding it.
-> - Sizable drift on 3 of 4 categories — if no rebalance has happened since setup, a one-time buy-to-target may be simpler than incremental nudges.
->
-> Numbers above are from a live yfinance fetch and reflect your config as of this reading.
+- Cite concrete EUR amounts from the snapshot, not percentages alone
+- Do not re-print data the user has already seen in a tool result
+- No per-section disclaimers; one closing line is enough
