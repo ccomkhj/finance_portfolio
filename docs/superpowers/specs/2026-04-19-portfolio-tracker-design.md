@@ -69,7 +69,11 @@ date,ticker,action,quantity,price,currency
 | `action` | `buy` \| `sell` | Only these two values |
 | `quantity` | float | Fractional shares allowed |
 | `price` | float | Per-share price in `currency` |
-| `currency` | `EUR` \| `USD` | Price currency (not necessarily asset listing currency) |
+| `currency` | `EUR` \| `USD` | Currency of the `price` column |
+
+**Recommended entry style for Trade Republic:** TR settles every trade in EUR (including US stocks — TR converts internally). Enter the EUR price you actually paid (`EUR_amount_charged / quantity`) with `currency: EUR`. This makes cost basis exact (no FX reconstruction needed) and avoids historical FX lookups entirely.
+
+USD entry is still supported for completeness (e.g., if another broker is ever added): `currency: USD` triggers a historical FX lookup for that transaction's date.
 
 ### `data/config.yaml`
 
