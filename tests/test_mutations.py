@@ -11,6 +11,7 @@ from portfolio.mutations import (
     ValidationError,
     record_transaction,
     set_cash,
+    set_target_weights,
 )
 from portfolio.config import load_config
 
@@ -112,3 +113,38 @@ def test_set_cash_preserves_other_fields(data_dir: Path) -> None:
     cfg = load_config(data_dir / "config.yaml")
     assert "core-etf" in cfg.categories
     assert cfg.base_currency == "EUR"
+
+
+def test_set_target_weights_happy(data_dir: Path) -> None:
+    set_target_weights(
+        data_dir / "config.yaml",
+        {"core-etf": 0.5, "bonds": 0.4, "cash": 0.1},
+    )
+    cfg = load_config(data_dir / "config.yaml")
+    assert cfg.categories["core-etf"].target_weight == 0.5
+    assert cfg.categories["bonds"].target_weight == 0.4
+
+
+def test_set_target_weights_rejects_bad_sum(data_dir: Path) -> None:
+    with pytest.raises(ValidationError, match="sum"):
+        set_target_weights(
+            data_dir / "config.yaml",
+            {"core-etf": 0.5, "bonds": 0.4, "cash": 0.2},
+        )
+
+
+def test_set_target_weights_rejects_missing_category(data_dir: Path) -> None:
+    with pytest.raises(ValidationError, match="categor"):
+        set_target_weights(
+            data_dir / "config.yaml",
+            {"core-etf": 0.6, "bonds": 0.4},
+        )
+
+
+def test_set_target_weights_preserves_tickers(data_dir: Path) -> None:
+    set_target_weights(
+        data_dir / "config.yaml",
+        {"core-etf": 0.5, "bonds": 0.4, "cash": 0.1},
+    )
+    cfg = load_config(data_dir / "config.yaml")
+    assert "WEBG.DE" in cfg.categories["core-etf"].tickers

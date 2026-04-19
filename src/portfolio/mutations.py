@@ -5,7 +5,7 @@ from pathlib import Path
 
 import yaml
 
-from portfolio.config import load_config
+from portfolio.config import load_config, WEIGHT_SUM_TOLERANCE
 from portfolio.positions import compute_positions, enrich_transactions_with_eur
 from portfolio.transactions import Transaction, append_transaction, load_transactions
 
@@ -71,4 +71,25 @@ def set_cash(config_path: Path, amount_eur: float) -> None:
         raise ValidationError(f"cash_balance_eur must be >= 0, got {amount_eur}")
     data = _read_yaml(config_path)
     data["cash_balance_eur"] = float(amount_eur)
+    _write_yaml(config_path, data)
+
+
+def set_target_weights(config_path: Path, weights: dict[str, float]) -> None:
+    data = _read_yaml(config_path)
+    existing = set(data["categories"].keys())
+    given = set(weights.keys())
+    if existing != given:
+        missing = existing - given
+        extra = given - existing
+        raise ValidationError(
+            f"weights must cover exactly these categories: "
+            f"missing={sorted(missing)}, extra={sorted(extra)}"
+        )
+    total = sum(weights.values())
+    if abs(total - 1.0) > WEIGHT_SUM_TOLERANCE:
+        raise ValidationError(f"weights sum to {total:.6f}, expected 1.0")
+    for name, w in weights.items():
+        if w < 0 or w > 1:
+            raise ValidationError(f"weight for {name!r} out of range: {w}")
+        data["categories"][name]["target_weight"] = float(w)
     _write_yaml(config_path, data)
