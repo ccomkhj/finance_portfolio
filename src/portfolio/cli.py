@@ -9,7 +9,7 @@ from portfolio.config import load_config
 from portfolio.positions import compute_positions, enrich_transactions_with_eur
 from portfolio.prices import fetch_fx_eur, fetch_historical_fx_eur, fetch_prices
 from portfolio.rebalance import compute_rebalance
-from portfolio.transactions import Transaction, append_transaction, load_transactions
+from portfolio.transactions import load_transactions
 from portfolio.valuation import value_positions
 
 DEFAULT_TX_PATH = Path("data/transactions.csv")
@@ -46,22 +46,23 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _cmd_add(args: argparse.Namespace) -> int:
-    config = load_config(args.config)
-    if args.ticker not in config.all_tickers():
-        known = ", ".join(sorted(config.all_tickers()))
-        print(f"error: ticker {args.ticker!r} is not in config. Known: {known}", file=sys.stderr)
-        return 1
+    from portfolio.mutations import ValidationError, record_transaction
 
-    tx = Transaction(
-        date=args.tx_date or date.today(),
-        ticker=args.ticker,
-        action="buy" if args.command == "add-buy" else "sell",
-        quantity=args.quantity,
-        price=args.price,
-        currency=args.currency,
-    )
-    append_transaction(args.transactions, tx)
-    print(f"appended: {tx}")
+    try:
+        record_transaction(
+            tx_path=args.transactions,
+            config_path=args.config,
+            tx_date=args.tx_date or date.today(),
+            ticker=args.ticker,
+            action="buy" if args.command == "add-buy" else "sell",
+            quantity=args.quantity,
+            price=args.price,
+            currency=args.currency,
+        )
+    except ValidationError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    print(f"appended: {args.ticker} {args.quantity}@{args.price} {args.currency}")
     return 0
 
 
