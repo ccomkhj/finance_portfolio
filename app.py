@@ -231,7 +231,45 @@ def _render_buy_form(config) -> None:
 
 
 def _render_sell_form(positions) -> None:
-    st.caption("Record sell (coming in Task 7)")
+    st.caption("Record sell")
+    held = [p for p in positions if p.quantity > 0]
+    if not held:
+        st.info("No positions to sell.")
+        return
+    ticker_to_pos = {p.ticker: p for p in held}
+    with st.form("sell_form", clear_on_submit=True):
+        tx_date = st.date_input("Date", value=datetime.now().date(), key="sell_date")
+        ticker = st.selectbox("Ticker", sorted(ticker_to_pos), key="sell_ticker")
+        max_qty = ticker_to_pos[ticker].quantity
+        quantity = st.number_input(
+            f"Quantity (held: {max_qty:.4f})",
+            min_value=0.0, max_value=float(max_qty), step=1.0, key="sell_qty",
+        )
+        price = st.number_input("Price", min_value=0.0, step=0.01, key="sell_price")
+        currency = st.selectbox(
+            "Currency", ["EUR", "USD"],
+            index=0 if ticker_to_pos[ticker].currency == "EUR" else 1,
+            key="sell_currency",
+        )
+        submitted = st.form_submit_button("Record sell")
+
+    if not submitted:
+        return
+    try:
+        record_transaction(
+            tx_path=TX_PATH,
+            config_path=CONFIG_PATH,
+            tx_date=tx_date,
+            ticker=ticker,
+            action="sell",
+            quantity=quantity,
+            price=price,
+            currency=currency,
+        )
+    except ValidationError as e:
+        st.error(str(e))
+        return
+    _after_write()
 
 
 def _render_cash_form(config) -> None:
