@@ -1,0 +1,22 @@
+base_currency: EUR
+
+categories:
+  global-equity:
+    target_weight: 0.70
+    tickers:
+      - VWCE.DE
+      - IWDA.AS
+  us-equity:
+    target_weight: 0.15
+    tickers:
+      - AAPL
+      - MSFT
+  bonds:
+    target_weight: 0.10
+    tickers:
+      - AGGH.DE
+  cash:
+    target_weight: 0.05
+    tickers: []
+
+cash_balance_eur: 1250.00
