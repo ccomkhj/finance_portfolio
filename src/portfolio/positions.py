@@ -32,7 +32,10 @@ def enrich_transactions_with_eur(
         return row["quantity"] * row["price"] * rate
 
     out = df.copy()
-    out["cost_eur"] = out.apply(row_cost, axis=1)
+    if out.empty:
+        out["cost_eur"] = pd.Series(dtype=float)
+    else:
+        out["cost_eur"] = out.apply(row_cost, axis=1)
     return out
 
 
