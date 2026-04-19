@@ -273,7 +273,23 @@ def _render_sell_form(positions) -> None:
 
 
 def _render_cash_form(config) -> None:
-    st.caption("Edit cash (coming in Task 8)")
+    st.caption("Edit cash")
+    with st.form("cash_form"):
+        amount = st.number_input(
+            "Cash balance (EUR)",
+            min_value=0.0, value=float(config.cash_balance_eur), step=100.0,
+            key="cash_amount",
+        )
+        submitted = st.form_submit_button("Save cash")
+
+    if not submitted:
+        return
+    try:
+        set_cash(CONFIG_PATH, amount)
+    except ValidationError as e:
+        st.error(str(e))
+        return
+    _after_write()
 
 
 def _render_targets_form(config) -> None:
