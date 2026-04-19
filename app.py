@@ -317,7 +317,38 @@ def _render_targets_form(config) -> None:
 
 
 def _render_tickers_form(config) -> None:
-    st.caption("Edit tickers (coming in Task 10)")
+    st.caption("Edit tickers per category")
+    tx_df = load_transactions(TX_PATH)
+    tickers_with_tx = set(tx_df["ticker"])
+
+    for name, cat in config.categories.items():
+        with st.form(f"tickers_form_{name}"):
+            st.write(f"**{name}**")
+            selected = st.multiselect(
+                "Tickers", list(cat.tickers), default=list(cat.tickers),
+                key=f"tickers_ms_{name}",
+            )
+            removed = set(cat.tickers) - set(selected)
+            risky = removed & tickers_with_tx
+            if risky:
+                st.warning(f"Removing tickers with transactions: {sorted(risky)}")
+            new_ticker = st.text_input(
+                "Add ticker", key=f"tickers_add_{name}", placeholder="e.g. SXR8.DE",
+            )
+            submitted = st.form_submit_button(f"Save {name}")
+
+        if not submitted:
+            continue
+        try:
+            final = list(selected)
+            if new_ticker.strip():
+                add_category_ticker(CONFIG_PATH, name, new_ticker.strip())
+                final.append(new_ticker.strip())
+            set_category_tickers(CONFIG_PATH, name, final)
+        except ValidationError as e:
+            st.error(str(e))
+            continue
+        _after_write()
 
 
 if __name__ == "__main__":
