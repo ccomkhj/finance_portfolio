@@ -131,6 +131,9 @@ def _render_allocation(valued, config) -> None:
     with c2:
         st.subheader("By ticker")
         fig = px.treemap(df, path=["category", "ticker"], values="value_eur", color="category")
+        fig.update_traces(
+            hovertemplate="<b>%{label}</b><br>€%{value:,.0f}<extra></extra>",
+        )
         st.plotly_chart(fig, use_container_width=True)
 
 
