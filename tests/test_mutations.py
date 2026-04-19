@@ -9,8 +9,10 @@ import yaml
 
 from portfolio.mutations import (
     ValidationError,
+    add_category_ticker,
     record_transaction,
     set_cash,
+    set_category_tickers,
     set_target_weights,
 )
 from portfolio.config import load_config
@@ -148,3 +150,31 @@ def test_set_target_weights_preserves_tickers(data_dir: Path) -> None:
     )
     cfg = load_config(data_dir / "config.yaml")
     assert "WEBG.DE" in cfg.categories["core-etf"].tickers
+
+
+def test_set_category_tickers_replaces_list(data_dir: Path) -> None:
+    set_category_tickers(data_dir / "config.yaml", "core-etf", ["WEBG.DE", "SXR8.DE"])
+    cfg = load_config(data_dir / "config.yaml")
+    assert cfg.categories["core-etf"].tickers == ("WEBG.DE", "SXR8.DE")
+
+
+def test_set_category_tickers_rejects_cross_category_duplicate(data_dir: Path) -> None:
+    with pytest.raises(ValidationError, match="already in"):
+        set_category_tickers(data_dir / "config.yaml", "core-etf", ["EUNA.DE"])
+
+
+def test_set_category_tickers_rejects_unknown_category(data_dir: Path) -> None:
+    with pytest.raises(ValidationError, match="unknown category"):
+        set_category_tickers(data_dir / "config.yaml", "nope", ["X.DE"])
+
+
+def test_add_category_ticker_appends(data_dir: Path) -> None:
+    add_category_ticker(data_dir / "config.yaml", "core-etf", "SXR8.DE")
+    cfg = load_config(data_dir / "config.yaml")
+    assert "SXR8.DE" in cfg.categories["core-etf"].tickers
+    assert "WEBG.DE" in cfg.categories["core-etf"].tickers
+
+
+def test_add_category_ticker_rejects_duplicate(data_dir: Path) -> None:
+    with pytest.raises(ValidationError, match="already"):
+        add_category_ticker(data_dir / "config.yaml", "bonds", "WEBG.DE")

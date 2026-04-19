@@ -93,3 +93,32 @@ def set_target_weights(config_path: Path, weights: dict[str, float]) -> None:
             raise ValidationError(f"weight for {name!r} out of range: {w}")
         data["categories"][name]["target_weight"] = float(w)
     _write_yaml(config_path, data)
+
+
+def set_category_tickers(config_path: Path, category: str, tickers: list[str]) -> None:
+    data = _read_yaml(config_path)
+    if category not in data["categories"]:
+        raise ValidationError(f"unknown category {category!r}")
+    for other_name, other in data["categories"].items():
+        if other_name == category:
+            continue
+        conflict = set(tickers) & set(other.get("tickers") or [])
+        if conflict:
+            raise ValidationError(
+                f"tickers {sorted(conflict)} already in category {other_name!r}"
+            )
+    data["categories"][category]["tickers"] = list(tickers)
+    _write_yaml(config_path, data)
+
+
+def add_category_ticker(config_path: Path, category: str, ticker: str) -> None:
+    data = _read_yaml(config_path)
+    if category not in data["categories"]:
+        raise ValidationError(f"unknown category {category!r}")
+    for name, body in data["categories"].items():
+        if ticker in (body.get("tickers") or []):
+            raise ValidationError(f"ticker {ticker!r} already in category {name!r}")
+    current = list(data["categories"][category].get("tickers") or [])
+    current.append(ticker)
+    data["categories"][category]["tickers"] = current
+    _write_yaml(config_path, data)
