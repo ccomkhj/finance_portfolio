@@ -30,6 +30,19 @@ def fetch_prices(tickers: list[str]) -> dict[str, float]:
     return prices
 
 
+def fetch_names(tickers: list[str]) -> dict[str, str]:
+    """Return ticker->company name. Falls back to the ticker itself on failure."""
+    names: dict[str, str] = {}
+    for t in tickers:
+        try:
+            info = yf.Ticker(t).info
+            name = info.get("longName") or info.get("shortName") or t
+        except Exception:
+            name = t
+        names[t] = name
+    return names
+
+
 def fetch_fx_eur(currencies: list[str]) -> dict[str, float]:
     """Return currency->EUR rate (i.e., how many EUR 1 unit of `currency` buys).
 

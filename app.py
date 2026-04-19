@@ -17,7 +17,7 @@ from portfolio.mutations import (
     set_target_weights,
 )
 from portfolio.positions import compute_positions, enrich_transactions_with_eur
-from portfolio.prices import fetch_fx_eur, fetch_historical_fx_eur, fetch_prices
+from portfolio.prices import fetch_fx_eur, fetch_historical_fx_eur, fetch_names, fetch_prices
 from portfolio.rebalance import compute_rebalance
 from portfolio.transactions import load_transactions
 from portfolio.valuation import value_positions
@@ -35,6 +35,11 @@ def _cached_prices(tickers: tuple[str, ...]) -> dict[str, float]:
 @st.cache_data(ttl=60)
 def _cached_fx(currencies: tuple[str, ...]) -> dict[str, float]:
     return fetch_fx_eur(list(currencies))
+
+
+@st.cache_data(ttl=24 * 3600)
+def _cached_names(tickers: tuple[str, ...]) -> dict[str, str]:
+    return fetch_names(list(tickers))
 
 
 def _after_write() -> None:
@@ -74,6 +79,7 @@ def main() -> None:
     with st.spinner("Fetching prices..."):
         prices = _cached_prices(tickers)
         fx = _cached_fx(currencies)
+        names = _cached_names(tickers)
 
     valued = value_positions(positions, prices, fx)
     missing = [p.ticker for p in positions if p.ticker not in {v.position.ticker for v in valued}]
@@ -82,9 +88,9 @@ def main() -> None:
 
     _render_summary(valued, config.cash_balance_eur)
     st.divider()
-    _render_allocation(valued, config)
+    _render_allocation(valued, config, names)
     st.divider()
-    _render_pnl_and_rebalance(valued, config, drift_threshold)
+    _render_pnl_and_rebalance(valued, config, drift_threshold, names)
 
     st.sidebar.caption(f"Last refresh: {datetime.now():%H:%M:%S}")
 
@@ -102,24 +108,27 @@ def _render_summary(valued, cash_eur: float) -> None:
     c4.metric("Cash (EUR)", f"€{cash_eur:,.2f}")
 
 
-def _render_allocation(valued, config) -> None:
+def _render_allocation(valued, config, names: dict[str, str]) -> None:
     if not valued:
         st.info("No positions to display.")
         return
 
     rows = []
     for v in valued:
+        ticker = v.position.ticker
         try:
-            cat = config.ticker_to_category(v.position.ticker)
+            cat = config.ticker_to_category(ticker)
         except KeyError:
             cat = "unassigned"
         rows.append({
             "category": cat,
-            "ticker": v.position.ticker,
+            "ticker": ticker,
+            "name": names.get(ticker, ticker),
             "value_eur": v.market_value_eur,
         })
     if config.cash_balance_eur > 0:
-        rows.append({"category": "cash", "ticker": "cash", "value_eur": config.cash_balance_eur})
+        rows.append({"category": "cash", "ticker": "cash", "name": "Cash",
+                     "value_eur": config.cash_balance_eur})
     df = pd.DataFrame(rows)
 
     c1, c2 = st.columns(2)
@@ -130,14 +139,17 @@ def _render_allocation(valued, config) -> None:
         st.plotly_chart(fig, use_container_width=True)
     with c2:
         st.subheader("By ticker")
-        fig = px.treemap(df, path=["category", "ticker"], values="value_eur", color="category")
+        fig = px.treemap(
+            df, path=["category", "ticker"], values="value_eur", color="category",
+            custom_data=["name"],
+        )
         fig.update_traces(
-            hovertemplate="<b>%{label}</b><br>€%{value:,.0f}<extra></extra>",
+            hovertemplate="<b>%{customdata[0]}</b><br>%{label}<br>€%{value:,.0f}<extra></extra>",
         )
         st.plotly_chart(fig, use_container_width=True)
 
 
-def _render_pnl_and_rebalance(valued, config, drift_threshold_pct: float) -> None:
+def _render_pnl_and_rebalance(valued, config, drift_threshold_pct: float, names: dict[str, str]) -> None:
     c1, c2 = st.columns(2)
 
     with c1:
@@ -146,13 +158,21 @@ def _render_pnl_and_rebalance(valued, config, drift_threshold_pct: float) -> Non
             st.info("No positions.")
         else:
             rows = [
-                {"ticker": v.position.ticker, "pnl_eur": v.pnl_eur}
+                {
+                    "ticker": v.position.ticker,
+                    "name": names.get(v.position.ticker, v.position.ticker),
+                    "pnl_eur": v.pnl_eur,
+                }
                 for v in sorted(valued, key=lambda v: abs(v.pnl_eur), reverse=True)
             ]
             df = pd.DataFrame(rows)
             df["color"] = df["pnl_eur"].apply(lambda x: "green" if x >= 0 else "red")
             fig = px.bar(df, x="pnl_eur", y="ticker", orientation="h", color="color",
-                         color_discrete_map={"green": "#2ca02c", "red": "#d62728"})
+                         color_discrete_map={"green": "#2ca02c", "red": "#d62728"},
+                         custom_data=["name"])
+            fig.update_traces(
+                hovertemplate="<b>%{customdata[0]}</b><br>%{y}<br>€%{x:,.0f}<extra></extra>",
+            )
             fig.update_layout(showlegend=False, yaxis={"categoryorder": "total ascending"})
             st.plotly_chart(fig, use_container_width=True)
 
