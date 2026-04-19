@@ -9,3 +9,5 @@ __pycache__/
 *.egg-info/
 /reports/*.png
 /reports/*.html
+
+docs/superpowers/
