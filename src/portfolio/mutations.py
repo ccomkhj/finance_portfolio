@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import date as Date
 from pathlib import Path
 
+import yaml
+
 from portfolio.config import load_config
 from portfolio.positions import compute_positions, enrich_transactions_with_eur
 from portfolio.transactions import Transaction, append_transaction, load_transactions
@@ -54,3 +56,19 @@ def _assert_sell_within_holding(tx_path: Path, ticker: str, quantity: float) -> 
         raise ValidationError(
             f"sell of {quantity} {ticker} exceeds held {held}"
         )
+
+
+def _read_yaml(path: Path) -> dict:
+    return yaml.safe_load(path.read_text())
+
+
+def _write_yaml(path: Path, data: dict) -> None:
+    path.write_text(yaml.safe_dump(data, sort_keys=False, default_flow_style=False))
+
+
+def set_cash(config_path: Path, amount_eur: float) -> None:
+    if amount_eur < 0:
+        raise ValidationError(f"cash_balance_eur must be >= 0, got {amount_eur}")
+    data = _read_yaml(config_path)
+    data["cash_balance_eur"] = float(amount_eur)
+    _write_yaml(config_path, data)

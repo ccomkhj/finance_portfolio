@@ -10,7 +10,9 @@ import yaml
 from portfolio.mutations import (
     ValidationError,
     record_transaction,
+    set_cash,
 )
+from portfolio.config import load_config
 
 
 CONFIG_YAML = """\
@@ -93,3 +95,20 @@ def test_record_transaction_rejects_sell_exceeding_held(data_dir: Path) -> None:
             price=11.0,
             currency="EUR",
         )
+
+
+def test_set_cash_updates_config(data_dir: Path) -> None:
+    set_cash(data_dir / "config.yaml", 2500.0)
+    assert load_config(data_dir / "config.yaml").cash_balance_eur == 2500.0
+
+
+def test_set_cash_rejects_negative(data_dir: Path) -> None:
+    with pytest.raises(ValidationError, match=">= 0"):
+        set_cash(data_dir / "config.yaml", -1.0)
+
+
+def test_set_cash_preserves_other_fields(data_dir: Path) -> None:
+    set_cash(data_dir / "config.yaml", 42.0)
+    cfg = load_config(data_dir / "config.yaml")
+    assert "core-etf" in cfg.categories
+    assert cfg.base_currency == "EUR"
