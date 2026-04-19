@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-import pandas as pd
 import yfinance as yf
 
 
@@ -22,7 +21,7 @@ def fetch_prices(tickers: list[str]) -> dict[str, float]:
     prices: dict[str, float] = {}
     for ticker in tickers:
         try:
-            closes = data[ticker]["Close"] if len(tickers) > 1 else data["Close"]
+            closes = data[ticker]["Close"]
         except KeyError:
             prices[ticker] = float("nan")
             continue
