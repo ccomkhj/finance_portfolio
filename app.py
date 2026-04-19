@@ -189,18 +189,14 @@ def _render_edit_forms(config, positions) -> None:
 
 def _render_buy_form(config) -> None:
     st.caption("Record buy")
-    tickers = sorted(config.all_tickers())
-    options = tickers + ["other…"]
+    known = config.all_tickers()
+    categories = sorted(config.categories.keys())
     with st.form("buy_form", clear_on_submit=True):
         tx_date = st.date_input("Date", value=datetime.now().date(), key="buy_date")
-        choice = st.selectbox("Ticker", options, key="buy_ticker")
-        new_ticker = ""
-        new_category = ""
-        if choice == "other…":
-            new_ticker = st.text_input("New ticker", key="buy_new_ticker")
-            new_category = st.selectbox(
-                "Category", sorted(config.categories.keys()), key="buy_new_cat"
-            )
+        ticker = st.text_input("Ticker", key="buy_ticker", placeholder="e.g. WEBG.DE").strip()
+        category = st.selectbox(
+            "Category (used only if ticker is new)", categories, key="buy_category"
+        )
         quantity = st.number_input("Quantity", min_value=0.0, step=1.0, key="buy_qty")
         price = st.number_input("Price", min_value=0.0, step=0.01, key="buy_price")
         currency = st.selectbox("Currency", ["EUR", "USD"], key="buy_currency")
@@ -209,11 +205,10 @@ def _render_buy_form(config) -> None:
     if not submitted:
         return
     try:
-        ticker = new_ticker.strip() if choice == "other…" else choice
-        if choice == "other…":
-            if not ticker:
-                raise ValidationError("ticker is required")
-            add_category_ticker(CONFIG_PATH, new_category, ticker)
+        if not ticker:
+            raise ValidationError("ticker is required")
+        if ticker not in known:
+            add_category_ticker(CONFIG_PATH, category, ticker)
         record_transaction(
             tx_path=TX_PATH,
             config_path=CONFIG_PATH,
