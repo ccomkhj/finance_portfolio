@@ -9,12 +9,12 @@ categories:
   us-equity:
     target_weight: 0.15
     tickers:
-      - AAPL.DE
-      - MSFT.DE
+      - IUSA.AS
+      - VUSA.AS
   bonds:
     target_weight: 0.10
     tickers:
-      - AGGH.DE
+      - EUNA.DE
   cash:
     target_weight: 0.05
     tickers: []
