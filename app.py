@@ -293,7 +293,27 @@ def _render_cash_form(config) -> None:
 
 
 def _render_targets_form(config) -> None:
-    st.caption("Edit targets (coming in Task 9)")
+    st.caption("Edit target weights")
+    new_weights: dict[str, float] = {}
+    with st.form("targets_form"):
+        for name, cat in config.categories.items():
+            new_weights[name] = st.number_input(
+                name, min_value=0.0, max_value=1.0, step=0.01,
+                value=float(cat.target_weight), key=f"target_{name}",
+            )
+        total = sum(new_weights.values())
+        if abs(total - 1.0) > 1e-3:
+            st.warning(f"sum = {total:.3f} (must be 1.000)")
+        submitted = st.form_submit_button("Save targets")
+
+    if not submitted:
+        return
+    try:
+        set_target_weights(CONFIG_PATH, new_weights)
+    except ValidationError as e:
+        st.error(str(e))
+        return
+    _after_write()
 
 
 def _render_tickers_form(config) -> None:
