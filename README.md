@@ -73,6 +73,10 @@ uv run streamlit run app.py
 
 Override default paths with `--transactions path/to.csv` or `--config path/to.yaml`.
 
+### Editing from the dashboard
+
+The sidebar **Edit** expander lets you record buys/sells and edit cash, target weights, and tickers without hand-editing files. Changes write directly to `data/config.yaml` and `data/transactions.csv`; undo with `git restore data/`.
+
 ## Data model
 
 Two files. That's it.
