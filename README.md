@@ -1,41 +1,36 @@
 # portfolio
 
-Private tracker for a Trade Republic portfolio. Transactions live in CSV, targets live in YAML, git is the audit trail.
+> A git-tracked, plain-text portfolio tracker for EU index investors — drift-to-target rebalancing in your terminal. No cloud, no broker login, no spreadsheet rot.
 
-## Setup
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-pytest-brightgreen.svg)](#tests)
+
+Buys and sells live in a CSV. Targets live in a YAML. Git is the audit trail. One command tells you exactly how much to buy or sell to hit your target allocation.
+
+<!-- TODO: add docs/dashboard.png screenshot here -->
+
+## Why not Ghostfolio / Portfolio Performance / a spreadsheet?
+
+- **Plain-text, git-audited** — every trade is a diff, every rebalance is a commit. Nothing to back up, nothing to lose.
+- **EUR-native, Trade Republic friendly** — enter the exact EUR you paid; no FX guesswork. USD trades auto-convert via historical FX.
+- **Drift-to-target in one command** — tells you *"buy €1,130 of global-equity, sell €604 of us-equity"* instead of showing you a pie chart and leaving you to do arithmetic.
+- **No server, no account, no tracking** — runs locally, reads public prices via yfinance. Your holdings never leave your laptop.
+- **Tiny codebase** — ~500 lines of Python. Fork it, bend it to your life.
+
+## Try it in 60 seconds
+
+Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
+git clone <this-repo> && cd portfolio
 uv sync --extra dev
-```
-
-## How it works
-
-1. You record each trade with `add-buy` / `add-sell` (or edit `data/transactions.csv` by hand).
-2. `show` fetches live prices via yfinance and prints positions + drift vs. target weights.
-3. The Streamlit dashboard (`app.py`) is the same data, visual.
-
-For Trade Republic trades, enter the EUR price you actually paid (`EUR_charged / quantity`) — no FX lookup needed.
-
-## Daily use
-
-```bash
-# Record a buy (defaults to today, EUR)
-uv run portfolio add-buy VWCE.DE 10 98.50
-
-# Record a sell
-uv run portfolio add-sell VWCE.DE 2 120.00 --date 2026-04-18
-
-# Validate data files (CSV schema, ticker→category mapping, target weights sum to 1)
-uv run portfolio check
-
-# Terminal snapshot
 uv run portfolio show
-
-# Dashboard
-uv run streamlit run app.py
 ```
 
-### Sample `show` output
+Seed data ships in `data/` — you'll see a sample portfolio and its drift out of the box. Replace with your own trades when you're ready.
+
+### Sample output
 
 ```
 TICKER            QTY    AVG EUR      PRICE    VALUE EUR    P&L EUR    P&L %
@@ -52,17 +47,57 @@ bonds                2.55%     10.00%       432.71
 cash                21.51%      5.00%      -959.47
 ```
 
-`DELTA EUR` is how much to buy (+) or sell (−) to hit the target weight.
+`DELTA EUR` is how much to buy (+) or sell (−) to hit your target weight.
 
-## Editing data
+## Daily use
 
-- `data/transactions.csv` — buys and sells, source of truth
-- `data/config.yaml` — categories, ticker→category mapping, target weights, cash balance
+```bash
+# Record a buy (defaults to today, EUR)
+uv run portfolio add-buy VWCE.DE 10 98.50
 
-Both are hand-editable; run `portfolio check` after manual edits.
+# USD trade — historical FX to EUR is fetched automatically
+uv run portfolio add-buy VOO 5 420.00 --currency USD --date 2026-03-10
+
+# Record a sell
+uv run portfolio add-sell VWCE.DE 2 120.00
+
+# Validate data files (CSV schema, ticker→category mapping, target weights sum to 1)
+uv run portfolio check
+
+# Terminal snapshot
+uv run portfolio show
+
+# Interactive dashboard
+uv run streamlit run app.py
+```
+
+Override default paths with `--transactions path/to.csv` or `--config path/to.yaml`.
+
+## Data model
+
+Two files. That's it.
+
+- **`data/transactions.csv`** — every buy and sell. For Trade Republic, enter `EUR_charged / quantity` as the price so no FX lookup is needed later.
+- **`data/config.yaml`** — categories (global-equity, us-equity, bonds, cash…), which tickers belong where, target weight per category, and current cash balance.
+
+Both are hand-editable. Run `uv run portfolio check` after manual edits. `git log data/` is your full history.
+
+### Glossary
+
+- **Category** — a bucket you want to target a weight for (e.g. `global-equity: 70%`).
+- **Drift** — how far your current allocation is from target. The `show` table's `DELTA EUR` column quantifies it.
+- **`.DE` / `.AS` tickers** — Xetra (Frankfurt) and Euronext Amsterdam listings, the EU-domiciled UCITS ETFs most Trade Republic users hold.
 
 ## Tests
 
 ```bash
 uv run pytest
 ```
+
+## License
+
+MIT — see [LICENSE](LICENSE).
+
+---
+
+If this is useful to you, a ⭐ means a lot and helps others find it.
