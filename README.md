@@ -8,7 +8,7 @@
 
 Buys and sells live in a CSV. Targets live in a YAML. Git is the audit trail. One command tells you exactly how much to buy or sell to hit your target allocation.
 
-<!-- TODO: add docs/dashboard.png screenshot here -->
+![Dashboard](docs/dashboard.png)
 
 ## Why not Ghostfolio / Portfolio Performance / a spreadsheet?
 
