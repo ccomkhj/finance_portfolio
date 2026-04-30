@@ -1,8 +1,40 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+import json
+import os
+import sys
+import tempfile
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
 import yfinance as yf
+
+PRICE_CACHE_PATH = Path("data/.price_cache.json")
+PRICE_CACHE_TTL_SECONDS = 600
+
+
+def _load_cache(path: Path) -> dict[str, dict]:
+    """Read the cache file. Missing or corrupt → empty dict."""
+    try:
+        return json.loads(path.read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def _save_cache(path: Path, cache: dict[str, dict]) -> None:
+    """Atomic write: tmp file in same dir, fsync, rename."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=".price_cache.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as tmp:
+            tmp.write(json.dumps(cache, indent=2))
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        os.replace(tmp_name, path)
+    except Exception:
+        if Path(tmp_name).exists():
+            os.unlink(tmp_name)
+        raise
 
 
 def fetch_prices(tickers: list[str]) -> dict[str, float]:
