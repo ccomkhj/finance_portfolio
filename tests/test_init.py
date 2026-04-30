@@ -151,3 +151,19 @@ def test_init_config_handles_missing_files(tmp_path: Path) -> None:
     )
     assert load_config(cfg).cash_balance_eur == 100.0
     assert tx.read_text() == HEADER
+
+
+def test_init_config_refuses_config_without_categories_key(tmp_path: Path) -> None:
+    """A user-edited config that lost its 'categories' key must require --force."""
+    cfg = tmp_path / "config.yaml"
+    tx = tmp_path / "transactions.csv"
+    cfg.write_text("base_currency: EUR\ncash_balance_eur: 999.0\n")  # no categories key
+    tx.write_text(HEADER)
+
+    with pytest.raises(ValidationError, match="categories"):
+        init_config(
+            config_path=cfg,
+            tx_path=tx,
+            cash_balance_eur=0.0,
+            categories=[("a", 1.0)],
+        )

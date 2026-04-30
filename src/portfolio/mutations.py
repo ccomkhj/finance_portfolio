@@ -160,19 +160,25 @@ def init_config(
     if config_path.exists() and not force:
         try:
             raw = _read_yaml(config_path)
-            existing_categories = raw.get("categories") or {}
-            if existing_categories:
-                n = len(existing_categories)
-                raise ValidationError(
-                    f"config {config_path} has {n} categor{'y' if n == 1 else 'ies'}; "
-                    "pass force=True to overwrite (existing file will be backed up to .bak)"
-                )
-        except ValidationError:
-            raise
         except Exception:
-            # Malformed YAML — treat as non-empty, refuse without force
             raise ValidationError(
                 f"config {config_path} is non-empty/unparseable; pass force=True to overwrite"
+            )
+        if not isinstance(raw, dict):
+            raise ValidationError(
+                f"config {config_path} is non-empty/unparseable; pass force=True to overwrite"
+            )
+        if "categories" not in raw:
+            raise ValidationError(
+                f"config {config_path} is non-empty (no 'categories' key); "
+                "pass force=True to overwrite (existing file will be backed up to .bak)"
+            )
+        existing_categories = raw.get("categories") or {}
+        if existing_categories:
+            n = len(existing_categories)
+            raise ValidationError(
+                f"config {config_path} has {n} categor{'y' if n == 1 else 'ies'}; "
+                "pass force=True to overwrite (existing file will be backed up to .bak)"
             )
     if tx_path.exists() and not force:
         existing = tx_path.read_text()
