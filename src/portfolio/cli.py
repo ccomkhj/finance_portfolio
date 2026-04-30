@@ -11,7 +11,7 @@ from portfolio.prices import fetch_fx_eur, fetch_historical_fx_eur, fetch_prices
 from portfolio.rebalance import compute_rebalance
 from portfolio.transactions import load_transactions
 from portfolio.valuation import value_positions
-from portfolio.mutations import init_config
+from portfolio.mutations import ValidationError, init_config
 
 DEFAULT_TX_PATH = Path("data/transactions.csv")
 DEFAULT_CONFIG_PATH = Path("data/config.yaml")
@@ -199,6 +199,8 @@ def _cmd_init(args: argparse.Namespace) -> int:
         print("aborted.", file=sys.stderr)
         return 0
 
+    # Clobber detection lives in init_config (single source of truth). The user
+    # walks all prompts before learning they need --force; accepted UX trade-off.
     cash, categories = _prompt_init_inputs()
 
     try:
@@ -209,16 +211,13 @@ def _cmd_init(args: argparse.Namespace) -> int:
             categories=categories,
             force=args.force,
         )
-    except Exception as e:
-        from portfolio.mutations import ValidationError
-        if isinstance(e, ValidationError):
-            print(f"error: {e}", file=sys.stderr)
-            print(
-                "hint: pass --force to overwrite existing files (a .bak copy is kept).",
-                file=sys.stderr,
-            )
-            return 1
-        raise
+    except ValidationError as e:
+        print(f"error: {e}", file=sys.stderr)
+        print(
+            "hint: pass --force to overwrite existing files (a .bak copy is kept).",
+            file=sys.stderr,
+        )
+        return 1
 
     print(
         f"wrote {cfg_path} ({len(categories)} categor"
