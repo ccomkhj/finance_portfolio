@@ -124,6 +124,32 @@ def add_category_ticker(config_path: Path, category: str, ticker: str) -> None:
     _write_yaml(config_path, data)
 
 
+def _detect_clobber(config_path: Path, tx_path: Path) -> str | None:
+    """Return a human-readable error message if init_config would refuse
+    without force, or None if it's safe to proceed.
+
+    Used both by init_config (to enforce) and by the CLI (to pre-flight
+    before prompting the user)."""
+    if config_path.exists():
+        try:
+            raw = _read_yaml(config_path)
+        except Exception:
+            return f"config {config_path} is non-empty/unparseable"
+        if not isinstance(raw, dict):
+            return f"config {config_path} is non-empty/unparseable"
+        if "categories" not in raw:
+            return f"config {config_path} is non-empty (no 'categories' key)"
+        existing = raw.get("categories") or {}
+        if existing:
+            n = len(existing)
+            return f"config {config_path} has {n} categor{'y' if n == 1 else 'ies'}"
+    if tx_path.exists():
+        non_header = [ln for ln in tx_path.read_text().splitlines()[1:] if ln.strip()]
+        if non_header:
+            return f"transactions {tx_path} has {len(non_header)} row(s)"
+    return None
+
+
 def init_config(
     *,
     config_path: Path,
@@ -157,37 +183,11 @@ def init_config(
         raise ValidationError(f"weights sum to {total:.6f}, expected 1.0")
 
     # --- Clobber check ---
-    if config_path.exists() and not force:
-        try:
-            raw = _read_yaml(config_path)
-        except Exception:
+    if not force:
+        msg = _detect_clobber(config_path, tx_path)
+        if msg:
             raise ValidationError(
-                f"config {config_path} is non-empty/unparseable; pass force=True to overwrite"
-            )
-        if not isinstance(raw, dict):
-            raise ValidationError(
-                f"config {config_path} is non-empty/unparseable; pass force=True to overwrite"
-            )
-        if "categories" not in raw:
-            raise ValidationError(
-                f"config {config_path} is non-empty (no 'categories' key); "
-                "pass force=True to overwrite (existing file will be backed up to .bak)"
-            )
-        existing_categories = raw.get("categories") or {}
-        if existing_categories:
-            n = len(existing_categories)
-            raise ValidationError(
-                f"config {config_path} has {n} categor{'y' if n == 1 else 'ies'}; "
-                "pass force=True to overwrite (existing file will be backed up to .bak)"
-            )
-    if tx_path.exists() and not force:
-        existing = tx_path.read_text()
-        # Header-only is OK; any data row triggers refusal
-        non_header_lines = [ln for ln in existing.splitlines()[1:] if ln.strip()]
-        if non_header_lines:
-            raise ValidationError(
-                f"transactions {tx_path} has {len(non_header_lines)} row(s); "
-                "pass force=True to overwrite (existing file will be backed up to .bak)"
+                f"{msg}; pass force=True to overwrite (existing file will be backed up to .bak)"
             )
 
     # --- Backup on force ---

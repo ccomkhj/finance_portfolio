@@ -263,3 +263,67 @@ def test_init_cli_aborts_on_no_confirmation(
 
     assert rc == 0  # graceful abort, not an error
     assert cfg.read_text() == original  # untouched
+
+
+def test_init_cli_preflight_refuses_before_prompts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """Existing categories + no --force → refuse after confirmation, no further prompts consumed."""
+    cfg = tmp_path / "config.yaml"
+    tx = tmp_path / "transactions.csv"
+    cfg.write_text(
+        "base_currency: EUR\n"
+        "categories:\n"
+        "  old:\n"
+        "    target_weight: 1.0\n"
+        "    tickers: []\n"
+        "cash_balance_eur: 0.0\n"
+    )
+    tx.write_text(HEADER)
+
+    # Only one input (the 'y'); if pre-flight works, no input is consumed beyond it.
+    monkeypatch.setattr("builtins.input", _scripted_input(["y"]))
+
+    rc = cli.main(["--config", str(cfg), "--transactions", str(tx), "init"])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "categor" in err.lower()
+    assert "--force" in err
+
+
+def test_dashboard_passes_unknown_options_through(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: list[list[str]] = []
+
+    def fake_call(cmd: list[str]) -> int:
+        captured.append(list(cmd))
+        return 0
+
+    monkeypatch.setattr("subprocess.call", fake_call)
+
+    rc = cli.main(["dashboard", "--server.port", "8765", "--server.headless", "true"])
+    assert rc == 0
+    assert len(captured) == 1
+    cmd = captured[0]
+    assert "--server.port" in cmd
+    assert "8765" in cmd
+    assert "--server.headless" in cmd
+    assert "true" in cmd
+
+
+def test_dashboard_extras_appear_before_app_py(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Streamlit options only take effect when they PRECEDE the script path."""
+    captured: list[list[str]] = []
+
+    def fake_call(cmd: list[str]) -> int:
+        captured.append(list(cmd))
+        return 0
+
+    monkeypatch.setattr("subprocess.call", fake_call)
+
+    rc = cli.main(["dashboard", "--server.port", "8765"])
+    assert rc == 0
+    cmd = captured[0]
+    run_idx = cmd.index("run")
+    port_idx = cmd.index("--server.port")
+    app_idx = next(i for i, x in enumerate(cmd) if str(x).endswith("app.py"))
+    assert run_idx < port_idx < app_idx, f"expected run < --server.port < app.py, got {cmd}"

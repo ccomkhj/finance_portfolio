@@ -37,11 +37,11 @@ def main(argv: list[str] | None = None) -> int:
     sp_init = sub.add_parser("init")
     sp_init.add_argument("--force", action="store_true", help="overwrite non-empty data files (backed up to .bak)")
 
-    sp_dash = sub.add_parser("dashboard", help="launch the streamlit dashboard")
-    sp_dash.add_argument("extras", nargs=argparse.REMAINDER,
-                         help="extra args forwarded to streamlit")
+    sub.add_parser("dashboard", help="launch the streamlit dashboard (extra args forwarded)")
 
-    args = parser.parse_args(argv)
+    args, unknown = parser.parse_known_args(argv)
+    if args.command != "dashboard" and unknown:
+        parser.error(f"unrecognized arguments: {' '.join(unknown)}")
 
     if args.command in ("add-buy", "add-sell"):
         return _cmd_add(args)
@@ -52,7 +52,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "init":
         return _cmd_init(args)
     if args.command == "dashboard":
-        return _cmd_dashboard(args)
+        return _cmd_dashboard(args, unknown)
     parser.error(f"unknown command {args.command}")
     return 2
 
@@ -206,8 +206,21 @@ def _cmd_init(args: argparse.Namespace) -> int:
         print("aborted.", file=sys.stderr)
         return 0
 
-    # Clobber detection lives in init_config (single source of truth). The user
-    # walks all prompts before learning they need --force; accepted UX trade-off.
+    # Pre-flight clobber check: refuse early so the user (or a piped script)
+    # doesn't waste effort filling in prompts only to be told to use --force.
+    if not args.force:
+        from portfolio.mutations import _detect_clobber
+        msg = _detect_clobber(cfg_path, tx_path)
+        if msg:
+            print(f"error: {msg}", file=sys.stderr)
+            print(
+                "hint: pass --force to overwrite existing files (a .bak copy is kept).",
+                file=sys.stderr,
+            )
+            return 1
+
+    # Pre-flight clobber check above bails before prompting; init_config also
+    # enforces the same check at write time. Both go through _detect_clobber.
     cash, categories = _prompt_init_inputs()
 
     try:
@@ -233,7 +246,7 @@ def _cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_dashboard(args: argparse.Namespace) -> int:
+def _cmd_dashboard(args: argparse.Namespace, extras: list[str]) -> int:
     app_path = _find_app_py()
     if app_path is None:
         print(
@@ -242,8 +255,7 @@ def _cmd_dashboard(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
-    extras = list(args.extras or [])
-    cmd = [sys.executable, "-m", "streamlit", "run", str(app_path), *extras]
+    cmd = [sys.executable, "-m", "streamlit", "run", *extras, str(app_path)]
     return subprocess.call(cmd)
 
 
