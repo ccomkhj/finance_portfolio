@@ -70,6 +70,8 @@ uv run portfolio show
 # Wipe and re-initialise config + transactions (interactive)
 uv run portfolio init             # refuses if existing data is non-empty
 uv run portfolio init --force     # overwrites; existing files renamed *.bak
+# After init, assign tickers to categories via 'portfolio dashboard' (Tickers form)
+# or by editing data/config.yaml — then add-buy works.
 
 # Interactive dashboard
 uv run portfolio dashboard
