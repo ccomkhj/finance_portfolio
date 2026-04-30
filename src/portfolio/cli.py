@@ -11,6 +11,7 @@ from portfolio.prices import fetch_fx_eur, fetch_historical_fx_eur, fetch_prices
 from portfolio.rebalance import compute_rebalance
 from portfolio.transactions import load_transactions
 from portfolio.valuation import value_positions
+from portfolio.mutations import init_config
 
 DEFAULT_TX_PATH = Path("data/transactions.csv")
 DEFAULT_CONFIG_PATH = Path("data/config.yaml")
@@ -32,6 +33,8 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("show")
     sub.add_parser("check")
+    sp_init = sub.add_parser("init")
+    sp_init.add_argument("--force", action="store_true", help="overwrite non-empty data files (backed up to .bak)")
 
     args = parser.parse_args(argv)
 
@@ -41,6 +44,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_show(args)
     if args.command == "check":
         return _cmd_check(args)
+    if args.command == "init":
+        return _cmd_init(args)
     parser.error(f"unknown command {args.command}")
     return 2
 
@@ -114,6 +119,111 @@ def _cmd_check(args: argparse.Namespace) -> int:
 
     print(f"ok: {len(config.categories)} categories, {len(known)} configured tickers, "
           f"{len(tx_df)} transactions.")
+    return 0
+
+
+def _prompt_init_inputs() -> tuple[float, list[tuple[str, float]]]:
+    """Drive the interactive `init` prompts. Returns (cash_eur, [(name, fraction)])."""
+    cash = _prompt_cash()
+    names = _prompt_categories()
+    while True:
+        weights_pct = _prompt_weights(names)
+        total = sum(weights_pct.values())
+        if abs(total - 100.0) <= 0.1:
+            break
+        print(
+            f"target weights sum to {total:.1f}%, expected 100.0%. Try again.",
+            file=sys.stderr,
+        )
+    return cash, [(n, weights_pct[n] / 100.0) for n in names]
+
+
+def _prompt_cash() -> float:
+    while True:
+        raw = input("Cash balance in EUR: ").strip()
+        try:
+            v = float(raw)
+        except ValueError:
+            print(f"  not a number: {raw!r}", file=sys.stderr)
+            continue
+        if v < 0:
+            print(f"  must be >= 0, got {v}", file=sys.stderr)
+            continue
+        return v
+
+
+def _prompt_categories() -> list[str]:
+    print("Category names (one per line, blank to finish):")
+    names: list[str] = []
+    while True:
+        raw = input("  ").strip()
+        if not raw:
+            if not names:
+                print("  must enter at least one category", file=sys.stderr)
+                continue
+            return names
+        if raw in names:
+            print(f"  duplicate {raw!r}, ignored", file=sys.stderr)
+            continue
+        names.append(raw)
+
+
+def _prompt_weights(names: list[str]) -> dict[str, float]:
+    weights: dict[str, float] = {}
+    width = max(len(n) for n in names)
+    for n in names:
+        while True:
+            raw = input(f"Target weight for {n.ljust(width)} (%): ").strip()
+            try:
+                v = float(raw)
+            except ValueError:
+                print(f"  not a number: {raw!r}", file=sys.stderr)
+                continue
+            if v < 0:
+                print(f"  must be >= 0, got {v}", file=sys.stderr)
+                continue
+            weights[n] = v
+            break
+    return weights
+
+
+def _cmd_init(args: argparse.Namespace) -> int:
+    cfg_path: Path = args.config
+    tx_path: Path = args.transactions
+    print(
+        f"This will overwrite {cfg_path} and clear {tx_path}.",
+        file=sys.stderr,
+    )
+    confirm = input("Continue? [y/N]: ").strip()
+    if confirm.lower() != "y":
+        print("aborted.", file=sys.stderr)
+        return 0
+
+    cash, categories = _prompt_init_inputs()
+
+    try:
+        init_config(
+            config_path=cfg_path,
+            tx_path=tx_path,
+            cash_balance_eur=cash,
+            categories=categories,
+            force=args.force,
+        )
+    except Exception as e:
+        from portfolio.mutations import ValidationError
+        if isinstance(e, ValidationError):
+            print(f"error: {e}", file=sys.stderr)
+            print(
+                "hint: pass --force to overwrite existing files (a .bak copy is kept).",
+                file=sys.stderr,
+            )
+            return 1
+        raise
+
+    print(
+        f"wrote {cfg_path} ({len(categories)} categor"
+        f"{'y' if len(categories) == 1 else 'ies'}) and cleared {tx_path}."
+    )
     return 0
 
 

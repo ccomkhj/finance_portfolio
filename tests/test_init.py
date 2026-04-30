@@ -167,3 +167,99 @@ def test_init_config_refuses_config_without_categories_key(tmp_path: Path) -> No
             cash_balance_eur=0.0,
             categories=[("a", 1.0)],
         )
+
+
+from portfolio import cli
+
+
+def _scripted_input(answers: list[str]):
+    it = iter(answers)
+    return lambda _prompt="": next(it)
+
+
+def test_prompt_init_inputs_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    answers = [
+        "1500",         # cash
+        "global-equity",  # category 1
+        "us-equity",      # category 2
+        "",               # end of categories
+        "70",             # weight 1
+        "30",             # weight 2
+    ]
+    monkeypatch.setattr("builtins.input", _scripted_input(answers))
+
+    cash, cats = cli._prompt_init_inputs()
+    assert cash == 1500.0
+    assert cats == [("global-equity", 0.7), ("us-equity", 0.3)]
+
+
+def test_prompt_init_inputs_reprompts_on_bad_weight_sum(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    answers = [
+        "0",            # cash
+        "a", "b", "",   # categories
+        "60", "30",     # first attempt sums to 90 → reprompt
+        "60", "40",     # second attempt sums to 100 → accepted
+    ]
+    monkeypatch.setattr("builtins.input", _scripted_input(answers))
+
+    cash, cats = cli._prompt_init_inputs()
+    assert cash == 0.0
+    assert cats == [("a", 0.6), ("b", 0.4)]
+    err = capsys.readouterr().err
+    assert "90" in err  # informed the user about the bad sum
+
+
+def test_prompt_init_inputs_reprompts_on_negative_cash(monkeypatch: pytest.MonkeyPatch) -> None:
+    answers = ["-5", "100", "only", "", "100"]
+    monkeypatch.setattr("builtins.input", _scripted_input(answers))
+
+    cash, cats = cli._prompt_init_inputs()
+    assert cash == 100.0
+    assert cats == [("only", 1.0)]
+
+
+def test_prompt_init_inputs_rejects_duplicate_category(monkeypatch: pytest.MonkeyPatch) -> None:
+    answers = ["0", "a", "a", "b", "", "50", "50"]
+    monkeypatch.setattr("builtins.input", _scripted_input(answers))
+
+    cash, cats = cli._prompt_init_inputs()
+    assert [n for n, _ in cats] == ["a", "b"]
+
+
+def test_init_cli_happy_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    cfg = tmp_path / "config.yaml"
+    tx = tmp_path / "transactions.csv"
+    cfg.write_text("base_currency: EUR\ncategories: {}\ncash_balance_eur: 0.0\n")
+    tx.write_text(HEADER)
+
+    answers = [
+        "y",         # confirmation
+        "100",       # cash
+        "only", "",  # categories
+        "100",       # weight
+    ]
+    monkeypatch.setattr("builtins.input", _scripted_input(answers))
+
+    rc = cli.main(["--config", str(cfg), "--transactions", str(tx), "init"])
+    assert rc == 0
+    assert load_config(cfg).cash_balance_eur == 100.0
+
+
+def test_init_cli_aborts_on_no_confirmation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = tmp_path / "config.yaml"
+    tx = tmp_path / "transactions.csv"
+    cfg.write_text("base_currency: EUR\ncategories: {}\ncash_balance_eur: 0.0\n")
+    tx.write_text(HEADER)
+    original = cfg.read_text()
+
+    monkeypatch.setattr("builtins.input", _scripted_input(["n"]))
+    rc = cli.main(["--config", str(cfg), "--transactions", str(tx), "init"])
+
+    assert rc == 0  # graceful abort, not an error
+    assert cfg.read_text() == original  # untouched
