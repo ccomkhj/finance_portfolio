@@ -67,8 +67,13 @@ uv run portfolio check
 # Terminal snapshot
 uv run portfolio show
 
+# Wipe and re-initialise config + transactions (interactive)
+uv run portfolio init             # refuses if existing data is non-empty
+uv run portfolio init --force     # overwrites; existing files renamed *.bak
+
 # Interactive dashboard
-uv run streamlit run app.py
+uv run portfolio dashboard
+uv run portfolio dashboard --server.port 8502   # extra args pass through
 ```
 
 Override default paths with `--transactions path/to.csv` or `--config path/to.yaml`.
@@ -85,6 +90,8 @@ Two files. That's it.
 - **`data/config.yaml`** — categories (global-equity, us-equity, bonds, cash…), which tickers belong where, target weight per category, and current cash balance.
 
 Both are hand-editable. Run `uv run portfolio check` after manual edits. `git log data/` is your full history.
+
+A small price cache is written to `data/.price_cache.json` (gitignored, 10-minute TTL) so repeated `portfolio show` calls and dashboard reloads don't re-hit yfinance. Delete the file to force a fresh fetch.
 
 ### Glossary
 
