@@ -66,7 +66,19 @@ def fetch_prices(
     if not stale_or_missing:
         return fresh
 
-    new_prices = _fetch_prices_yf(stale_or_missing)
+    try:
+        new_prices = _fetch_prices_yf(stale_or_missing)
+    except Exception as e:
+        if all(t in cache for t in stale_or_missing):
+            print(
+                f"warning: yfinance error ({e}); using stale cached prices",
+                file=sys.stderr,
+            )
+            for t in stale_or_missing:
+                fresh[t] = cache[t]["price"]
+            return fresh
+        raise
+
     iso_now = now.isoformat().replace("+00:00", "Z")
     for t, p in new_prices.items():
         cache[t] = {"price": p, "fetched_at": iso_now}

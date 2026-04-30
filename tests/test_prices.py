@@ -128,3 +128,61 @@ def test_fetch_prices_partial_hit_only_fetches_missing(
 
 def test_fetch_prices_empty_tickers_returns_empty(tmp_path: Path) -> None:
     assert prices.fetch_prices([], cache_path=tmp_path / "cache.json") == {}
+
+
+def test_yf_error_with_stale_cache_returns_stale_with_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    cache_path = tmp_path / "cache.json"
+    old = datetime(2026, 4, 28, 10, 0, 0, tzinfo=timezone.utc)
+    cache_path.write_text(json.dumps({
+        "VWCE.DE": {"price": 150.0, "fetched_at": _iso(old)}
+    }))
+
+    def boom(tickers: list[str]) -> dict[str, float]:
+        raise RuntimeError("yfinance down")
+
+    monkeypatch.setattr(prices, "_fetch_prices_yf", boom)
+    now = datetime(2026, 4, 29, 10, 0, 0, tzinfo=timezone.utc)
+
+    result = prices.fetch_prices(["VWCE.DE"], cache_path=cache_path, now=now)
+    assert result == {"VWCE.DE": 150.0}
+
+    err = capsys.readouterr().err
+    assert "warning" in err.lower()
+    assert "yfinance" in err.lower()
+
+
+def test_yf_error_no_cache_propagates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cache_path = tmp_path / "cache.json"
+
+    def boom(tickers: list[str]) -> dict[str, float]:
+        raise RuntimeError("yfinance down")
+
+    monkeypatch.setattr(prices, "_fetch_prices_yf", boom)
+    now = datetime(2026, 4, 29, 10, 0, 0, tzinfo=timezone.utc)
+
+    with pytest.raises(RuntimeError, match="yfinance down"):
+        prices.fetch_prices(["VWCE.DE"], cache_path=cache_path, now=now)
+
+
+def test_yf_error_partial_cache_propagates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One ticker has stale cache, the other has none — must propagate."""
+    cache_path = tmp_path / "cache.json"
+    old = datetime(2026, 4, 28, 10, 0, 0, tzinfo=timezone.utc)
+    cache_path.write_text(json.dumps({
+        "A.DE": {"price": 1.0, "fetched_at": _iso(old)}
+    }))
+
+    def boom(tickers: list[str]) -> dict[str, float]:
+        raise RuntimeError("yfinance down")
+
+    monkeypatch.setattr(prices, "_fetch_prices_yf", boom)
+    now = datetime(2026, 4, 29, 10, 0, 0, tzinfo=timezone.utc)
+
+    with pytest.raises(RuntimeError):
+        prices.fetch_prices(["A.DE", "B.DE"], cache_path=cache_path, now=now)
