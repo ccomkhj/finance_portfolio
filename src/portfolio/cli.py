@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 from datetime import date
 from pathlib import Path
@@ -36,6 +37,10 @@ def main(argv: list[str] | None = None) -> int:
     sp_init = sub.add_parser("init")
     sp_init.add_argument("--force", action="store_true", help="overwrite non-empty data files (backed up to .bak)")
 
+    sp_dash = sub.add_parser("dashboard", help="launch the streamlit dashboard")
+    sp_dash.add_argument("extras", nargs=argparse.REMAINDER,
+                         help="extra args forwarded to streamlit")
+
     args = parser.parse_args(argv)
 
     if args.command in ("add-buy", "add-sell"):
@@ -46,6 +51,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_check(args)
     if args.command == "init":
         return _cmd_init(args)
+    if args.command == "dashboard":
+        return _cmd_dashboard(args)
     parser.error(f"unknown command {args.command}")
     return 2
 
@@ -224,6 +231,32 @@ def _cmd_init(args: argparse.Namespace) -> int:
         f"{'y' if len(categories) == 1 else 'ies'}) and cleared {tx_path}."
     )
     return 0
+
+
+def _cmd_dashboard(args: argparse.Namespace) -> int:
+    app_path = _find_app_py()
+    if app_path is None:
+        print(
+            "error: app.py not found. Run from the repo root, "
+            "or check that pyproject.toml is alongside app.py.",
+            file=sys.stderr,
+        )
+        return 1
+    extras = list(args.extras or [])
+    cmd = [sys.executable, "-m", "streamlit", "run", str(app_path), *extras]
+    return subprocess.call(cmd)
+
+
+def _find_app_py() -> Path | None:
+    cwd_app = Path("app.py")
+    if cwd_app.exists():
+        return cwd_app.resolve()
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        candidate = parent / "app.py"
+        if candidate.exists() and (parent / "pyproject.toml").exists():
+            return candidate
+    return None
 
 
 if __name__ == "__main__":
