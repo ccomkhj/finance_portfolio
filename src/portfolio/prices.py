@@ -7,6 +7,11 @@ import yfinance as yf
 
 def fetch_prices(tickers: list[str]) -> dict[str, float]:
     """Fetch latest closing price for each ticker. NaN prices are included."""
+    return _fetch_prices_yf(tickers)
+
+
+def _fetch_prices_yf(tickers: list[str]) -> dict[str, float]:
+    """Direct yfinance call. Returns ticker -> latest close (NaN on failure)."""
     if not tickers:
         return {}
     data = yf.download(
