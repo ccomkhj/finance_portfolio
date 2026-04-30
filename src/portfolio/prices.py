@@ -37,9 +37,52 @@ def _save_cache(path: Path, cache: dict[str, dict]) -> None:
         raise
 
 
-def fetch_prices(tickers: list[str]) -> dict[str, float]:
-    """Fetch latest closing price for each ticker. NaN prices are included."""
-    return _fetch_prices_yf(tickers)
+def fetch_prices(
+    tickers: list[str],
+    *,
+    cache_path: Path = PRICE_CACHE_PATH,
+    now: datetime | None = None,
+) -> dict[str, float]:
+    """Fetch latest close prices, with a 10-minute disk cache.
+
+    Cached values <PRICE_CACHE_TTL_SECONDS old are returned without hitting
+    yfinance. Stale or missing tickers are refetched and the cache is updated.
+    """
+    if not tickers:
+        return {}
+
+    now = now or datetime.now(timezone.utc)
+    cache = _load_cache(cache_path)
+
+    fresh: dict[str, float] = {}
+    stale_or_missing: list[str] = []
+    for t in tickers:
+        entry = cache.get(t)
+        if entry and _is_fresh(entry, now):
+            fresh[t] = entry["price"]
+        else:
+            stale_or_missing.append(t)
+
+    if not stale_or_missing:
+        return fresh
+
+    new_prices = _fetch_prices_yf(stale_or_missing)
+    iso_now = now.isoformat().replace("+00:00", "Z")
+    for t, p in new_prices.items():
+        cache[t] = {"price": p, "fetched_at": iso_now}
+    _save_cache(cache_path, cache)
+
+    fresh.update(new_prices)
+    return fresh
+
+
+def _is_fresh(entry: dict, now: datetime) -> bool:
+    try:
+        fetched_at = datetime.fromisoformat(entry["fetched_at"].replace("Z", "+00:00"))
+    except (KeyError, ValueError):
+        return False
+    age = (now - fetched_at).total_seconds()
+    return 0 <= age < PRICE_CACHE_TTL_SECONDS
 
 
 def _fetch_prices_yf(tickers: list[str]) -> dict[str, float]:
