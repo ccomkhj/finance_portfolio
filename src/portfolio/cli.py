@@ -37,6 +37,12 @@ def main(argv: list[str] | None = None) -> int:
     sp_init = sub.add_parser("init")
     sp_init.add_argument("--force", action="store_true", help="overwrite non-empty data files (backed up to .bak)")
 
+    sp_import = sub.add_parser("import", help="bulk-import transactions from a CSV")
+    sp_import.add_argument("file", type=Path)
+    sp_import.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+    sp_import.add_argument("--dry-run", action="store_true", help="preview only; append nothing")
+    sp_import.add_argument("--remap", action="store_true", help="re-run interactive profile setup")
+
     sub.add_parser("dashboard", help="launch the streamlit dashboard (extra args forwarded)")
 
     args, unknown = parser.parse_known_args(argv)
@@ -51,6 +57,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_check(args)
     if args.command == "init":
         return _cmd_init(args)
+    if args.command == "import":
+        return _cmd_import(args)
     if args.command == "dashboard":
         return _cmd_dashboard(args, unknown)
     parser.error(f"unknown command {args.command}")
@@ -243,6 +251,227 @@ def _cmd_init(args: argparse.Namespace) -> int:
         f"wrote {cfg_path} ({len(categories)} categor"
         f"{'y' if len(categories) == 1 else 'ies'}) and cleared {tx_path}."
     )
+    return 0
+
+
+_FIELD_ALIASES = {
+    "date": ["date", "datum", "valuta", "datetime"],
+    "isin": ["isin", "wkn", "instrument"],
+    "action": ["action", "typ", "type", "art", "richtung", "side"],
+    "quantity": ["quantity", "anzahl", "menge", "shares", "stück", "stueck", "qty"],
+    "price": ["price", "kurs", "preis"],
+    "currency": ["currency", "währung", "waehrung", "ccy"],
+}
+
+
+def _pick_column(field: str, headers: list[str]) -> str | None:
+    aliases = _FIELD_ALIASES.get(field, [])
+    suggestion: int | None = None
+    for i, h in enumerate(headers):
+        if h.strip().lower() in aliases:
+            suggestion = i
+            break
+    print(f"\nWhich column is the {field}?")
+    for i, h in enumerate(headers):
+        mark = " (suggested)" if i == suggestion else ""
+        print(f"  [{i}] {h}{mark}")
+    if field == "currency":
+        print("  [n] none (default EUR)")
+    while True:
+        default = "" if suggestion is None else str(suggestion)
+        prompt = f"  choose [{default}]: " if default else "  choose: "
+        raw = input(prompt).strip()
+        if not raw and default:
+            return headers[suggestion]  # type: ignore[index]
+        if field == "currency" and raw.lower() == "n":
+            return None
+        if raw.isdigit() and 0 <= int(raw) < len(headers):
+            return headers[int(raw)]
+        print("  invalid choice.")
+
+
+def _setup_profile(headers: list[str], records: list[dict]) -> dict:
+    columns: dict[str, str] = {}
+    for field in ("date", "isin", "action", "quantity", "price"):
+        col = _pick_column(field, headers)
+        columns[field] = col  # type: ignore[assignment]
+    currency_col = _pick_column("currency", headers)
+    if currency_col is not None:
+        columns["currency"] = currency_col
+
+    sample = str(records[0].get(columns["price"], "")) if records else ""
+    suggested = "comma" if ("," in sample and sample.rfind(",") > sample.rfind(".")) else "dot"
+    raw = input(f"\nDecimal style — comma (1.234,56) or dot (1,234.56)? [{suggested}]: ").strip().lower()
+    decimal = raw if raw in ("comma", "dot") else suggested
+
+    raw = input("Date format (strptime pattern, or 'auto') [auto]: ").strip()
+    date_format = raw or "auto"
+
+    distinct: list[str] = []
+    for rec in records:
+        v = str(rec.get(columns["action"], "")).strip()
+        if v and v.lower() not in [d.lower() for d in distinct]:
+            distinct.append(v)
+    actions: dict[str, str] = {}
+    print("\nClassify each action value:")
+    for v in distinct:
+        while True:
+            raw = input(f"  {v!r} -> [buy/sell]: ").strip().lower()
+            if raw in ("buy", "sell"):
+                actions[v.lower()] = raw
+                break
+            print("  enter 'buy' or 'sell'.")
+
+    return {"columns": columns, "decimal": decimal, "date_format": date_format, "actions": actions}
+
+
+def _prompt_isin(isin: str, categories: list[str]) -> tuple[str, str]:
+    print(f"\nUnmapped ISIN {isin} — assign a yfinance ticker (EUR listing, e.g. WEBG.DE).")
+    ticker = ""
+    while not ticker:
+        ticker = input("  ticker: ").strip()
+    print("  category:")
+    for i, c in enumerate(categories):
+        print(f"    [{i}] {c}")
+    while True:
+        raw = input("  choose category: ").strip()
+        if raw.isdigit() and 0 <= int(raw) < len(categories):
+            return ticker, categories[int(raw)]
+        print("  invalid choice.")
+
+
+def _check_no_negative_holdings(tx_df, new_rows) -> str | None:
+    from collections import defaultdict
+
+    events: list[tuple] = []
+    for d, t, a, q in zip(tx_df["date"], tx_df["ticker"], tx_df["action"], tx_df["quantity"]):
+        dd = d.date() if hasattr(d, "date") else d
+        events.append((dd, t, float(q) if a == "buy" else -float(q)))
+    for r in new_rows:
+        events.append((r.date, r.ticker, r.quantity if r.action == "buy" else -r.quantity))
+    events.sort(key=lambda e: e[0])
+    holdings: dict[str, float] = defaultdict(float)
+    for d, t, signed in events:
+        holdings[t] += signed
+        if holdings[t] < -1e-9:
+            return f"sell exceeds holdings: {t} goes negative on {d.isoformat()}"
+    return None
+
+
+def _cmd_import(args: argparse.Namespace) -> int:
+    import pandas as pd
+
+    from portfolio.importer import (
+        ImportProfile, dedupe_key, parse_rows, resolve_tickers, split_new,
+    )
+    from portfolio.mutations import (
+        ValidationError, add_category_ticker, read_import_profile, read_isin_map,
+        set_import_profile, set_isin_map_entry,
+    )
+    from portfolio.transactions import Transaction, append_transactions
+
+    path: Path = args.file
+    if not path.exists():
+        print(f"error: file not found: {path}", file=sys.stderr)
+        return 1
+    try:
+        raw = pd.read_csv(path, dtype=str, keep_default_na=False)
+    except Exception as e:
+        print(f"error: cannot read {path}: {e}", file=sys.stderr)
+        return 1
+    records = raw.to_dict("records")
+    headers = list(raw.columns)
+    if not records:
+        print(f"error: {path} has no data rows", file=sys.stderr)
+        return 1
+
+    profile_dict = read_import_profile(args.config)
+    if profile_dict is None or args.remap:
+        profile_dict = _setup_profile(headers, records)
+        set_import_profile(args.config, profile_dict)
+        print("saved import profile to config.")
+    profile = ImportProfile.from_dict(profile_dict)
+
+    rows, errors = parse_rows(records, profile)
+    if errors:
+        print(f"error: {len(errors)} row(s) failed to parse:", file=sys.stderr)
+        for e in errors:
+            print(f"  {e}", file=sys.stderr)
+        print("hint: fix the source file, or re-run with --remap to redo the mapping.", file=sys.stderr)
+        return 1
+
+    isin_map = read_isin_map(args.config)
+    resolved, unknown = resolve_tickers(rows, isin_map)
+    newly_mapped = 0
+    if unknown:
+        if args.yes:
+            print(f"error: {len(unknown)} unmapped ISIN(s) and --yes given: {unknown}", file=sys.stderr)
+            return 1
+        config = load_config(args.config)
+        categories = sorted(config.categories.keys())
+        for isin in unknown:
+            ticker, category = _prompt_isin(isin, categories)
+            try:
+                add_category_ticker(args.config, category, ticker)
+            except ValidationError as e:
+                if "already in category" not in str(e):
+                    print(f"error: {e}", file=sys.stderr)
+                    return 1
+            set_isin_map_entry(args.config, isin, ticker)
+            newly_mapped += 1
+        isin_map = read_isin_map(args.config)
+        resolved, unknown = resolve_tickers(rows, isin_map)
+        if unknown:
+            print(f"error: still unmapped: {unknown}", file=sys.stderr)
+            return 1
+
+    tx_df = load_transactions(args.transactions)
+    existing_keys = {
+        dedupe_key(d.date(), t, a, float(q), float(p))
+        for d, t, a, q, p in zip(
+            tx_df["date"], tx_df["ticker"], tx_df["action"],
+            tx_df["quantity"], tx_df["price"],
+        )
+    }
+    new_rows, duplicates = split_new(resolved, existing_keys)
+
+    print(
+        f"parsed {len(resolved)} · {len(new_rows)} new · "
+        f"{len(duplicates)} duplicate(s) skipped · {newly_mapped} ISIN(s) newly mapped"
+    )
+    if new_rows:
+        print(f"{'DATE':<12}{'TICKER':<10}{'ACTION':<6}{'QTY':>12}{'PRICE':>12}{'CCY':>5}")
+        for r in sorted(new_rows, key=lambda r: r.date):
+            print(
+                f"{r.date.isoformat():<12}{r.ticker:<10}{r.action:<6}"
+                f"{r.quantity:>12.4f}{r.price:>12.2f}{r.currency:>5}"
+            )
+
+    if args.dry_run:
+        print("dry-run: nothing appended.")
+        return 0
+    if not new_rows:
+        print("nothing to import.")
+        return 0
+    if not args.yes:
+        confirm = input(f"Append {len(new_rows)} new transaction(s)? [y/N]: ").strip().lower()
+        if confirm != "y":
+            print("aborted.")
+            return 0
+
+    msg = _check_no_negative_holdings(tx_df, new_rows)
+    if msg:
+        print(f"error: {msg}", file=sys.stderr)
+        return 1
+
+    txs = [
+        Transaction(date=r.date, ticker=r.ticker, action=r.action,
+                    quantity=r.quantity, price=r.price, currency=r.currency)
+        for r in sorted(new_rows, key=lambda r: r.date)
+    ]
+    append_transactions(args.transactions, txs)
+    print(f"imported {len(txs)}, skipped {len(duplicates)} duplicate(s).")
+    print("run `portfolio check` to verify.")
     return 0
 
 
