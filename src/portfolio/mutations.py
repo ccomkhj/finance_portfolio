@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date as Date
 from pathlib import Path
+from typing import Any, cast
 
 import yaml
 
@@ -58,11 +59,11 @@ def _assert_sell_within_holding(tx_path: Path, ticker: str, quantity: float) -> 
         )
 
 
-def _read_yaml(path: Path) -> dict:
-    return yaml.safe_load(path.read_text())
+def _read_yaml(path: Path) -> dict[str, Any]:
+    return cast("dict[str, Any]", yaml.safe_load(path.read_text()))
 
 
-def _write_yaml(path: Path, data: dict) -> None:
+def _write_yaml(path: Path, data: dict[str, Any]) -> None:
     path.write_text(yaml.safe_dump(data, sort_keys=False, default_flow_style=False))
 
 
@@ -121,6 +122,31 @@ def add_category_ticker(config_path: Path, category: str, ticker: str) -> None:
     current = list(data["categories"][category].get("tickers") or [])
     current.append(ticker)
     data["categories"][category]["tickers"] = current
+    _write_yaml(config_path, data)
+
+
+def read_import_profile(config_path: Path) -> dict[str, Any] | None:
+    data = _read_yaml(config_path)
+    profile = data.get("import_profile")
+    return cast("dict[str, Any]", profile) if profile is not None else None
+
+
+def set_import_profile(config_path: Path, profile: dict[str, Any]) -> None:
+    data = _read_yaml(config_path)
+    data["import_profile"] = profile
+    _write_yaml(config_path, data)
+
+
+def read_isin_map(config_path: Path) -> dict[str, str]:
+    data = _read_yaml(config_path)
+    return dict(data.get("isin_map") or {})
+
+
+def set_isin_map_entry(config_path: Path, isin: str, ticker: str) -> None:
+    data = _read_yaml(config_path)
+    m = dict(data.get("isin_map") or {})
+    m[isin] = ticker
+    data["isin_map"] = m
     _write_yaml(config_path, data)
 
 
