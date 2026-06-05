@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
-import yaml
 
 from portfolio.mutations import (
     ValidationError,
@@ -178,3 +177,86 @@ def test_add_category_ticker_appends(data_dir: Path) -> None:
 def test_add_category_ticker_rejects_duplicate(data_dir: Path) -> None:
     with pytest.raises(ValidationError, match="already"):
         add_category_ticker(data_dir / "config.yaml", "bonds", "WEBG.DE")
+
+
+def test_add_category_ticker_rejects_unknown_category(data_dir: Path) -> None:
+    with pytest.raises(ValidationError, match="unknown category"):
+        add_category_ticker(data_dir / "config.yaml", "nope", "X.DE")
+
+
+def test_record_transaction_wraps_append_valueerror(data_dir: Path) -> None:
+    # 'hold' passes the config/ticker checks but append_transaction rejects it;
+    # the raw ValueError must surface as a ValidationError.
+    with pytest.raises(ValidationError, match="invalid action 'hold'"):
+        record_transaction(
+            tx_path=data_dir / "transactions.csv",
+            config_path=data_dir / "config.yaml",
+            tx_date=date(2026, 4, 19),
+            ticker="WEBG.DE",
+            action="hold",
+            quantity=1.0,
+            price=1.0,
+            currency="EUR",
+        )
+
+
+def test_record_transaction_sell_within_holding_succeeds(data_dir: Path) -> None:
+    tx_path = data_dir / "transactions.csv"
+    cfg_path = data_dir / "config.yaml"
+    record_transaction(
+        tx_path=tx_path, config_path=cfg_path, tx_date=date(2026, 4, 19),
+        ticker="WEBG.DE", action="buy", quantity=10.0, price=10.0, currency="EUR",
+    )
+    record_transaction(
+        tx_path=tx_path, config_path=cfg_path, tx_date=date(2026, 4, 20),
+        ticker="WEBG.DE", action="sell", quantity=4.0, price=12.0, currency="EUR",
+    )
+    df = pd.read_csv(tx_path)
+    assert len(df) == 2
+    assert df.iloc[1]["action"] == "sell"
+
+
+def test_set_target_weights_rejects_out_of_range_weight(data_dir: Path) -> None:
+    # Sums to 1.0 so it clears the sum check, but a negative weight is invalid.
+    with pytest.raises(ValidationError, match="out of range"):
+        set_target_weights(
+            data_dir / "config.yaml",
+            {"core-etf": -0.1, "bonds": 0.6, "cash": 0.5},
+        )
+
+
+def test_import_profile_roundtrip(tmp_path):
+    from pathlib import Path
+    from portfolio.mutations import read_import_profile, set_import_profile
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "base_currency: EUR\n"
+        "categories:\n  core:\n    target_weight: 1.0\n    tickers: []\n"
+        "cash_balance_eur: 0.0\n"
+    )
+    assert read_import_profile(cfg) is None
+    profile = {"columns": {"date": "Datum"}, "decimal": "comma",
+               "date_format": "auto", "actions": {"kauf": "buy"}}
+    set_import_profile(cfg, profile)
+    assert read_import_profile(cfg) == profile
+    # other keys preserved
+    import yaml
+    data = yaml.safe_load(cfg.read_text())
+    assert data["base_currency"] == "EUR"
+    assert "core" in data["categories"]
+
+
+def test_isin_map_roundtrip(tmp_path):
+    from portfolio.mutations import read_isin_map, set_isin_map_entry
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "base_currency: EUR\n"
+        "categories:\n  core:\n    target_weight: 1.0\n    tickers: []\n"
+        "cash_balance_eur: 0.0\n"
+    )
+    assert read_isin_map(cfg) == {}
+    set_isin_map_entry(cfg, "IE00A", "AAA.DE")
+    set_isin_map_entry(cfg, "IE00B", "BBB.DE")
+    assert read_isin_map(cfg) == {"IE00A": "AAA.DE", "IE00B": "BBB.DE"}
