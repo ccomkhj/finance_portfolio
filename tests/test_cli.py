@@ -385,3 +385,71 @@ def test_import_sell_exceeds_holdings_aborts(tmp_path, monkeypatch):
     rc = cli.main(["--config", str(cfg), "--transactions", str(tx), "import", str(csv)])
     assert rc == 1
     assert [l for l in tx.read_text().splitlines()[1:] if l.strip()] == []
+
+
+def test_import_same_day_buy_before_sell_ok(tmp_path, monkeypatch):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "base_currency: EUR\n"
+        "categories:\n  core:\n    target_weight: 1.0\n    tickers: [WEBG.DE]\n"
+        "cash_balance_eur: 0.0\n"
+        "import_profile:\n"
+        "  columns: {date: Datum, isin: ISIN, action: Typ, quantity: Anzahl, price: Kurs, currency: Waehrung}\n"
+        "  decimal: comma\n  date_format: auto\n  actions: {kauf: buy, verkauf: sell}\n"
+        "isin_map: {IE00X: WEBG.DE}\n"
+    )
+    tx = tmp_path / "transactions.csv"
+    tx.write_text("date,ticker,action,quantity,price,currency\n")
+    csv = tmp_path / "tr.csv"
+    csv.write_text(
+        "Datum,ISIN,Typ,Anzahl,Kurs,Waehrung\n"
+        "19.04.2026,IE00X,Verkauf,\"5\",\"100,00\",EUR\n"   # sell listed first
+        "19.04.2026,IE00X,Kauf,\"10\",\"100,00\",EUR\n"     # buy same day
+    )
+    _feed_inputs(monkeypatch, ["y"])
+    rc = cli.main(["--config", str(cfg), "--transactions", str(tx), "import", str(csv)])
+    assert rc == 0
+    rows = [l for l in tx.read_text().splitlines()[1:] if l.strip()]
+    assert len(rows) == 2
+
+
+def test_import_yes_happy_path_no_prompt(tmp_path):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "base_currency: EUR\n"
+        "categories:\n  core:\n    target_weight: 1.0\n    tickers: [WEBG.DE]\n"
+        "cash_balance_eur: 0.0\n"
+        "import_profile:\n"
+        "  columns: {date: Datum, isin: ISIN, action: Typ, quantity: Anzahl, price: Kurs, currency: Waehrung}\n"
+        "  decimal: comma\n  date_format: auto\n  actions: {kauf: buy}\n"
+        "isin_map: {IE00X: WEBG.DE}\n"
+    )
+    tx = tmp_path / "transactions.csv"
+    tx.write_text("date,ticker,action,quantity,price,currency\n")
+    csv = tmp_path / "tr.csv"
+    csv.write_text("Datum,ISIN,Typ,Anzahl,Kurs,Waehrung\n20.04.2026,IE00X,Kauf,\"1\",\"1.000,00\",EUR\n")
+    rc = cli.main(["--config", str(cfg), "--transactions", str(tx), "import", str(csv), "--yes"])
+    assert rc == 0
+    rows = [l for l in tx.read_text().splitlines()[1:] if l.strip()]
+    assert len(rows) == 1
+
+
+def test_import_parse_error_aborts(tmp_path, capsys):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "base_currency: EUR\n"
+        "categories:\n  core:\n    target_weight: 1.0\n    tickers: [WEBG.DE]\n"
+        "cash_balance_eur: 0.0\n"
+        "import_profile:\n"
+        "  columns: {date: Datum, isin: ISIN, action: Typ, quantity: Anzahl, price: Kurs, currency: Waehrung}\n"
+        "  decimal: comma\n  date_format: auto\n  actions: {kauf: buy}\n"
+        "isin_map: {IE00X: WEBG.DE}\n"
+    )
+    tx = tmp_path / "transactions.csv"
+    tx.write_text("date,ticker,action,quantity,price,currency\n")
+    csv = tmp_path / "tr.csv"
+    csv.write_text("Datum,ISIN,Typ,Anzahl,Kurs,Waehrung\n20.04.2026,IE00X,Dividende,\"1\",\"1.000,00\",EUR\n")
+    rc = cli.main(["--config", str(cfg), "--transactions", str(tx), "import", str(csv)])
+    assert rc == 1
+    assert "unknown action" in capsys.readouterr().err
+    assert [l for l in tx.read_text().splitlines()[1:] if l.strip()] == []

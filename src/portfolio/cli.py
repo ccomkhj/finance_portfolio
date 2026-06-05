@@ -40,7 +40,7 @@ def main(argv: list[str] | None = None) -> int:
     sp_import = sub.add_parser("import", help="bulk-import transactions from a CSV")
     sp_import.add_argument("file", type=Path)
     sp_import.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
-    sp_import.add_argument("--dry-run", action="store_true", help="preview only; append nothing")
+    sp_import.add_argument("--dry-run", action="store_true", help="preview only; append no transactions (column profile and ISIN mappings are still saved)")
     sp_import.add_argument("--remap", action="store_true", help="re-run interactive profile setup")
 
     sub.add_parser("dashboard", help="launch the streamlit dashboard (extra args forwarded)")
@@ -49,18 +49,22 @@ def main(argv: list[str] | None = None) -> int:
     if args.command != "dashboard" and unknown:
         parser.error(f"unrecognized arguments: {' '.join(unknown)}")
 
-    if args.command in ("add-buy", "add-sell"):
-        return _cmd_add(args)
-    if args.command == "show":
-        return _cmd_show(args)
-    if args.command == "check":
-        return _cmd_check(args)
-    if args.command == "init":
-        return _cmd_init(args)
-    if args.command == "import":
-        return _cmd_import(args)
-    if args.command == "dashboard":
-        return _cmd_dashboard(args, unknown)
+    try:
+        if args.command in ("add-buy", "add-sell"):
+            return _cmd_add(args)
+        if args.command == "show":
+            return _cmd_show(args)
+        if args.command == "check":
+            return _cmd_check(args)
+        if args.command == "init":
+            return _cmd_init(args)
+        if args.command == "import":
+            return _cmd_import(args)
+        if args.command == "dashboard":
+            return _cmd_dashboard(args, unknown)
+    except (EOFError, KeyboardInterrupt):
+        print("aborted.", file=sys.stderr)
+        return 1
     parser.error(f"unknown command {args.command}")
     return 2
 
@@ -343,15 +347,18 @@ def _prompt_isin(isin: str, categories: list[str]) -> tuple[str, str]:
 def _check_no_negative_holdings(tx_df, new_rows) -> str | None:
     from collections import defaultdict
 
+    # (date, rank, ticker, signed_qty) — rank 0 = buy, 1 = sell, so a same-day
+    # buy is always applied before a same-day sell.
     events: list[tuple] = []
     for d, t, a, q in zip(tx_df["date"], tx_df["ticker"], tx_df["action"], tx_df["quantity"]):
         dd = d.date() if hasattr(d, "date") else d
-        events.append((dd, t, float(q) if a == "buy" else -float(q)))
+        events.append((dd, 0 if a == "buy" else 1, t, float(q) if a == "buy" else -float(q)))
     for r in new_rows:
-        events.append((r.date, r.ticker, r.quantity if r.action == "buy" else -r.quantity))
-    events.sort(key=lambda e: e[0])
+        events.append((r.date, 0 if r.action == "buy" else 1, r.ticker,
+                       r.quantity if r.action == "buy" else -r.quantity))
+    events.sort(key=lambda e: (e[0], e[1]))
     holdings: dict[str, float] = defaultdict(float)
-    for d, t, signed in events:
+    for d, _rank, t, signed in events:
         holdings[t] += signed
         if holdings[t] < -1e-9:
             return f"sell exceeds holdings: {t} goes negative on {d.isoformat()}"
