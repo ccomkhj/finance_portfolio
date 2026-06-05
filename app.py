@@ -271,12 +271,15 @@ def _render_buy_form(config) -> None:
     except ValidationError as e:
         st.error(str(e))
         return
+    # Safe only because _after_write() immediately calls st.rerun(): the pops
+    # take effect on the next run, never mutating an active widget key this run.
     _clear_buy_state()
     _after_write()
 
 
 def _clear_buy_state() -> None:
     for k in (
+        # keep in sync with the buy_* widget keys above
         "buy_ticker_sel", "buy_new_ticker", "buy_category",
         "buy_date", "buy_qty", "buy_price", "buy_currency",
     ):
