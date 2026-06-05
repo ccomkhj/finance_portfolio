@@ -26,6 +26,21 @@ DATA = Path("data")
 CONFIG_PATH = DATA / "config.yaml"
 TX_PATH = DATA / "transactions.csv"
 
+SENTINEL = "➕ New ticker…"
+
+
+def resolve_buy_ticker(selection: str, new_text: str, sentinel: str) -> tuple[str, bool]:
+    """Resolve the buy form's ticker selection into (ticker, is_new).
+
+    Raises ValidationError when the "new ticker" sentinel is chosen but no
+    ticker text was entered."""
+    if selection != sentinel:
+        return selection, False
+    ticker = new_text.strip()
+    if not ticker:
+        raise ValidationError("ticker is required")
+    return ticker, True
+
 
 @st.cache_data(ttl=60)
 def _cached_prices(tickers: tuple[str, ...]) -> dict[str, float]:
