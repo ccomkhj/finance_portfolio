@@ -73,7 +73,7 @@ def test_parse_rows_happy():
              "Anzahl": "2,5", "Kurs": "1.234,56", "Waehrung": "EUR"}]
     rows, errors = parse_rows(recs, _profile())
     assert errors == []
-    assert rows == [ParsedRow(0, __import__("datetime").date(2026, 4, 19),
+    assert rows == [ParsedRow(0, date(2026, 4, 19),
                               "IE00X", "buy", 2.5, 1234.56, "EUR")]
 
 
@@ -136,3 +136,17 @@ def test_split_new_detects_existing_match():
     new, dups = split_new([r], existing)
     assert new == []
     assert dups == [r]
+
+
+def test_normalize_number_thousands_only_is_locale_assumption():
+    # In comma mode a dot is always thousands; in dot mode a comma is always thousands.
+    assert normalize_number("1.234", "comma") == 1234.0
+    assert normalize_number("1,234", "dot") == 1234.0
+
+
+def test_parse_rows_rejects_nonpositive_price():
+    recs = [{"Datum": "19.04.2026", "ISIN": "IE00X", "Typ": "Kauf",
+             "Anzahl": "1", "Kurs": "0,0", "Waehrung": "EUR"}]
+    rows, errors = parse_rows(recs, _profile())
+    assert rows == []
+    assert len(errors) == 1 and "price" in errors[0]

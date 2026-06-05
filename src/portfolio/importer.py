@@ -5,6 +5,16 @@ from datetime import date, datetime
 
 
 def normalize_number(raw: str, decimal: str) -> float:
+    """Parse a localized number to float.
+
+    decimal="comma": German style — '.' is ALWAYS a thousands separator and ','
+    is the decimal point (so "1.234" -> 1234.0, "1.234,56" -> 1234.56).
+    decimal="dot": '.' is the decimal point and ',' is ALWAYS thousands
+    (so "1,234" -> 1234.0, "1,234.56" -> 1234.56).
+    This matches Trade Republic's locale-consistent exports; a single value that
+    mixes conventions cannot be disambiguated and will misparse silently.
+    Raises ValueError on empty/non-numeric input or an unknown decimal style.
+    """
     s = str(raw).strip().replace(" ", "")
     if not s:
         raise ValueError("empty number")
