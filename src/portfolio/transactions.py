@@ -89,3 +89,41 @@ def append_transaction(path: Path, tx: Transaction) -> None:
         if Path(tmp_name).exists():
             os.unlink(tmp_name)
         raise
+
+
+def append_transactions(path: Path, txs: list[Transaction]) -> None:
+    """Append many transactions in one atomic write (temp file + fsync + rename).
+
+    Validates every transaction before writing anything; an invalid row raises
+    and leaves the file untouched. Empty list is a no-op."""
+    if not txs:
+        return
+    for tx in txs:
+        if tx.action not in VALID_ACTIONS:
+            raise ValueError(f"invalid action {tx.action!r}")
+        if tx.currency not in VALID_CURRENCIES:
+            raise ValueError(f"invalid currency {tx.currency!r}")
+        if tx.quantity <= 0 or tx.price <= 0:
+            raise ValueError("quantity and price must be > 0")
+
+    header = "date,ticker,action,quantity,price,currency\n"
+    existing = path.read_text() if path.exists() else header
+    new_rows = "".join(
+        f"{tx.date.isoformat()},{tx.ticker},{tx.action},"
+        f"{tx.quantity},{tx.price},{tx.currency}\n"
+        for tx in txs
+    )
+
+    dir_ = path.parent
+    dir_.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=dir_, prefix=".transactions.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as tmp:
+            tmp.write(existing + new_rows)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        os.replace(tmp_name, path)
+    except Exception:
+        if Path(tmp_name).exists():
+            os.unlink(tmp_name)
+        raise
