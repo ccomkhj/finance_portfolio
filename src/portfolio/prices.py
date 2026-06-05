@@ -1,12 +1,104 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+import json
+import os
+import sys
+import tempfile
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
 import yfinance as yf
 
+PRICE_CACHE_PATH = Path("data/.price_cache.json")
+PRICE_CACHE_TTL_SECONDS = 600
 
-def fetch_prices(tickers: list[str]) -> dict[str, float]:
-    """Fetch latest closing price for each ticker. NaN prices are included."""
+
+def _load_cache(path: Path) -> dict[str, dict]:
+    """Read the cache file. Missing or corrupt → empty dict."""
+    try:
+        return json.loads(path.read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def _save_cache(path: Path, cache: dict[str, dict]) -> None:
+    """Atomic write: tmp file in same dir, fsync, rename."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=".price_cache.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as tmp:
+            tmp.write(json.dumps(cache, indent=2))
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        os.replace(tmp_name, path)
+    except Exception:
+        if Path(tmp_name).exists():
+            os.unlink(tmp_name)
+        raise
+
+
+def fetch_prices(
+    tickers: list[str],
+    *,
+    cache_path: Path = PRICE_CACHE_PATH,
+    now: datetime | None = None,
+) -> dict[str, float]:
+    """Fetch latest close prices, with a 10-minute disk cache.
+
+    Cached values <PRICE_CACHE_TTL_SECONDS old are returned without hitting
+    yfinance. Stale or missing tickers are refetched and the cache is updated.
+    """
+    if not tickers:
+        return {}
+
+    now = now or datetime.now(timezone.utc)
+    cache = _load_cache(cache_path)
+
+    fresh: dict[str, float] = {}
+    stale_or_missing: list[str] = []
+    for t in tickers:
+        entry = cache.get(t)
+        if entry and _is_fresh(entry, now):
+            fresh[t] = entry["price"]
+        else:
+            stale_or_missing.append(t)
+
+    if not stale_or_missing:
+        return fresh
+
+    try:
+        new_prices = _fetch_prices_yf(stale_or_missing)
+    except Exception as e:
+        if all(t in cache for t in stale_or_missing):
+            print(
+                f"warning: yfinance error ({e}); using stale cached prices",
+                file=sys.stderr,
+            )
+            for t in stale_or_missing:
+                fresh[t] = cache[t]["price"]
+            return fresh
+        raise
+
+    iso_now = now.isoformat().replace("+00:00", "Z")
+    for t, p in new_prices.items():
+        cache[t] = {"price": p, "fetched_at": iso_now}
+    _save_cache(cache_path, cache)
+
+    fresh.update(new_prices)
+    return fresh
+
+
+def _is_fresh(entry: dict, now: datetime) -> bool:
+    try:
+        fetched_at = datetime.fromisoformat(entry["fetched_at"].replace("Z", "+00:00"))
+    except (KeyError, ValueError):
+        return False
+    age = (now - fetched_at).total_seconds()
+    return 0 <= age < PRICE_CACHE_TTL_SECONDS
+
+
+def _fetch_prices_yf(tickers: list[str]) -> dict[str, float]:
+    """Direct yfinance call. Returns ticker -> latest close (NaN on failure)."""
     if not tickers:
         return {}
     data = yf.download(

@@ -7,7 +7,7 @@ import yaml
 
 from portfolio.config import load_config, WEIGHT_SUM_TOLERANCE
 from portfolio.positions import compute_positions, enrich_transactions_with_eur
-from portfolio.transactions import Transaction, append_transaction, load_transactions
+from portfolio.transactions import REQUIRED_COLUMNS, Transaction, append_transaction, load_transactions
 
 
 class ValidationError(ValueError):
@@ -122,3 +122,92 @@ def add_category_ticker(config_path: Path, category: str, ticker: str) -> None:
     current.append(ticker)
     data["categories"][category]["tickers"] = current
     _write_yaml(config_path, data)
+
+
+def _detect_clobber(config_path: Path, tx_path: Path) -> str | None:
+    """Return a human-readable error message if init_config would refuse
+    without force, or None if it's safe to proceed.
+
+    Used both by init_config (to enforce) and by the CLI (to pre-flight
+    before prompting the user)."""
+    if config_path.exists():
+        try:
+            raw = _read_yaml(config_path)
+        except Exception:
+            return f"config {config_path} is non-empty/unparseable"
+        if not isinstance(raw, dict):
+            return f"config {config_path} is non-empty/unparseable"
+        if "categories" not in raw:
+            return f"config {config_path} is non-empty (no 'categories' key)"
+        existing = raw.get("categories") or {}
+        if existing:
+            n = len(existing)
+            return f"config {config_path} has {n} categor{'y' if n == 1 else 'ies'}"
+    if tx_path.exists():
+        non_header = [ln for ln in tx_path.read_text().splitlines()[1:] if ln.strip()]
+        if non_header:
+            return f"transactions {tx_path} has {len(non_header)} row(s)"
+    return None
+
+
+def init_config(
+    *,
+    config_path: Path,
+    tx_path: Path,
+    cash_balance_eur: float,
+    categories: list[tuple[str, float]],
+    force: bool = False,
+) -> None:
+    """Wipe and re-initialise config.yaml and transactions.csv.
+
+    Validates inputs, refuses to clobber non-empty existing files unless force=True
+    (in which case existing files are renamed to <name>.bak), then writes a fresh
+    config.yaml and a header-only transactions.csv.
+
+    `categories` is a list of (name, weight_fraction) in display order. Weights
+    must be in [0, 1] and sum to 1.0 ± WEIGHT_SUM_TOLERANCE.
+    """
+    # --- Input validation ---
+    if cash_balance_eur < 0:
+        raise ValidationError(f"cash_balance_eur must be >= 0, got {cash_balance_eur}")
+    if not categories:
+        raise ValidationError("must provide at least one category")
+    names = [n for n, _ in categories]
+    if len(names) != len(set(names)):
+        raise ValidationError(f"duplicate category names: {names}")
+    for name, w in categories:
+        if w < 0 or w > 1:
+            raise ValidationError(f"weight for {name!r} out of range: {w}")
+    total = sum(w for _, w in categories)
+    if abs(total - 1.0) > WEIGHT_SUM_TOLERANCE:
+        raise ValidationError(f"weights sum to {total:.6f}, expected 1.0")
+
+    # --- Clobber check ---
+    if not force:
+        msg = _detect_clobber(config_path, tx_path)
+        if msg:
+            raise ValidationError(
+                f"{msg}; pass force=True to overwrite (existing file will be backed up to .bak)"
+            )
+
+    # --- Backup on force ---
+    if force:
+        if config_path.exists():
+            (config_path.parent / (config_path.name + ".bak")).write_text(config_path.read_text())
+        if tx_path.exists():
+            (tx_path.parent / (tx_path.name + ".bak")).write_text(tx_path.read_text())
+
+    # --- Write new files ---
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    new_config = {
+        "base_currency": "EUR",
+        "categories": {
+            name: {"target_weight": float(w), "tickers": []}
+            for name, w in categories
+        },
+        "cash_balance_eur": float(cash_balance_eur),
+    }
+    _write_yaml(config_path, new_config)
+
+    tx_path.parent.mkdir(parents=True, exist_ok=True)
+    tx_path.write_text(",".join(REQUIRED_COLUMNS) + "\n")

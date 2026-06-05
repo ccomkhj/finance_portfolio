@@ -26,6 +26,21 @@ DATA = Path("data")
 CONFIG_PATH = DATA / "config.yaml"
 TX_PATH = DATA / "transactions.csv"
 
+SENTINEL = "➕ New ticker…"
+
+
+def resolve_buy_ticker(selection: str, new_text: str, sentinel: str) -> tuple[str, bool]:
+    """Resolve the buy form's ticker selection into (ticker, is_new).
+
+    Raises ValidationError when the "new ticker" sentinel is chosen but no
+    ticker text was entered."""
+    if selection != sentinel:
+        return selection, False
+    ticker = new_text.strip()
+    if not ticker:
+        raise ValidationError("ticker is required")
+    return ticker, True
+
 
 @st.cache_data(ttl=60)
 def _cached_prices(tickers: tuple[str, ...]) -> dict[str, float]:
@@ -70,9 +85,6 @@ def main() -> None:
     enriched = enrich_transactions_with_eur(tx_df, fetch_historical_fx_eur)
     positions = compute_positions(enriched)
 
-    with st.sidebar.expander("Edit", expanded=False):
-        _render_edit_forms(config, positions)
-
     tickers = tuple(sorted(p.ticker for p in positions))
     currencies = tuple(sorted({p.currency for p in positions} | {"EUR"}))
 
@@ -86,11 +98,15 @@ def main() -> None:
     if missing:
         st.warning(f"No price available for: {', '.join(missing)} (excluded from valuation).")
 
-    _render_summary(valued, config.cash_balance_eur)
-    st.divider()
-    _render_allocation(valued, config, names)
-    st.divider()
-    _render_pnl_and_rebalance(valued, config, drift_threshold, names)
+    overview, edit = st.tabs(["Overview", "Edit"])
+    with overview:
+        _render_summary(valued, config.cash_balance_eur)
+        st.divider()
+        _render_allocation(valued, config, names)
+        st.divider()
+        _render_pnl_and_rebalance(valued, config, drift_threshold, names)
+    with edit:
+        _render_edit_forms(config, positions)
 
     st.sidebar.caption(f"Last refresh: {datetime.now():%H:%M:%S}")
 
@@ -199,38 +215,48 @@ def _render_pnl_and_rebalance(valued, config, drift_threshold_pct: float, names:
 
 
 def _render_edit_forms(config, positions) -> None:
-    _render_buy_form(config)
+    st.subheader("Trades")
+    c1, c2 = st.columns(2)
+    with c1:
+        _render_buy_form(config)
+    with c2:
+        _render_sell_form(positions)
     st.divider()
-    _render_sell_form(positions)
+    c1, c2 = st.columns(2)
+    with c1:
+        _render_cash_form(config)
+    with c2:
+        _render_targets_form(config)
     st.divider()
-    _render_cash_form(config)
-    st.divider()
-    _render_targets_form(config)
-    st.divider()
+    st.subheader("Tickers")
     _render_tickers_form(config)
 
 
 def _render_buy_form(config) -> None:
     st.caption("Record buy")
-    known = config.all_tickers()
+    known = sorted(config.all_tickers())
     categories = sorted(config.categories.keys())
-    with st.form("buy_form", clear_on_submit=True):
-        tx_date = st.date_input("Date", value=datetime.now().date(), key="buy_date")
-        ticker = st.text_input("Ticker", key="buy_ticker", placeholder="e.g. WEBG.DE").strip()
-        category = st.selectbox(
-            "Category (used only if ticker is new)", categories, key="buy_category"
-        )
-        quantity = st.number_input("Quantity", min_value=0.0, step=1.0, key="buy_qty")
-        price = st.number_input("Price", min_value=0.0, step=0.01, key="buy_price")
-        currency = st.selectbox("Currency", ["EUR", "USD"], key="buy_currency")
-        submitted = st.form_submit_button("Record buy")
+    options = known + [SENTINEL]
 
-    if not submitted:
+    selection = st.selectbox("Ticker", options, key="buy_ticker_sel")
+    new_text = ""
+    category = categories[0] if categories else ""
+    if selection == SENTINEL:
+        new_text = st.text_input(
+            "New ticker", key="buy_new_ticker", placeholder="e.g. WEBG.DE"
+        )
+        category = st.selectbox("Category", categories, key="buy_category")
+
+    tx_date = st.date_input("Date", value=datetime.now().date(), key="buy_date")
+    quantity = st.number_input("Quantity", min_value=0.0, step=1.0, key="buy_qty")
+    price = st.number_input("Price", min_value=0.0, step=0.01, key="buy_price")
+    currency = st.selectbox("Currency", ["EUR", "USD"], key="buy_currency")
+
+    if not st.button("Record buy", key="buy_submit"):
         return
     try:
-        if not ticker:
-            raise ValidationError("ticker is required")
-        if ticker not in known:
+        ticker, is_new = resolve_buy_ticker(selection, new_text, SENTINEL)
+        if is_new:
             add_category_ticker(CONFIG_PATH, category, ticker)
         record_transaction(
             tx_path=TX_PATH,
@@ -245,7 +271,19 @@ def _render_buy_form(config) -> None:
     except ValidationError as e:
         st.error(str(e))
         return
+    # Safe only because _after_write() immediately calls st.rerun(): the pops
+    # take effect on the next run, never mutating an active widget key this run.
+    _clear_buy_state()
     _after_write()
+
+
+def _clear_buy_state() -> None:
+    for k in (
+        # keep in sync with the buy_* widget keys above
+        "buy_ticker_sel", "buy_new_ticker", "buy_category",
+        "buy_date", "buy_qty", "buy_price", "buy_currency",
+    ):
+        st.session_state.pop(k, None)
 
 
 def _render_sell_form(positions) -> None:

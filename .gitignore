@@ -10,4 +10,5 @@ __pycache__/
 /reports/*.png
 /reports/*.html
 
+/data/.price_cache.json
 docs/superpowers/
