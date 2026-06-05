@@ -16,7 +16,7 @@ Buys and sells live in a CSV. Targets live in a YAML. Git is the audit trail. On
 - **EUR-native, Trade Republic friendly** — enter the exact EUR you paid; no FX guesswork. USD trades auto-convert via historical FX.
 - **Drift-to-target in one command** — tells you *"buy €1,130 of global-equity, sell €604 of us-equity"* instead of showing you a pie chart and leaving you to do arithmetic.
 - **No server, no account, no tracking** — runs locally, reads public prices via yfinance. Your holdings never leave your laptop.
-- **Tiny codebase** — ~500 lines of Python. Fork it, bend it to your life.
+- **Tiny codebase** — ~850 lines of core Python (plus a Streamlit dashboard). Fork it, bend it to your life.
 
 ## Try it in 60 seconds
 
@@ -83,6 +83,18 @@ Override default paths with `--transactions path/to.csv` or `--config path/to.ya
 ### Editing from the dashboard
 
 The sidebar **Edit** expander lets you record buys/sells and edit cash, target weights, and tickers without hand-editing files. Changes write directly to `data/config.yaml` and `data/transactions.csv`; undo with `git restore data/`.
+
+### Importing transactions from a CSV
+
+`portfolio import path/to/trades.csv` bulk-imports trades. On first run it walks
+you through mapping your CSV's columns (date, ISIN, action, quantity, price,
+currency), the decimal style, the date format, and which action words mean
+buy/sell — saving that profile to `config.yaml`. Unknown ISINs are mapped to a
+yfinance ticker once and remembered. Re-importing the same file is safe:
+duplicate rows are skipped.
+
+Flags: `--dry-run` (preview only), `--yes` (skip confirmation; requires all ISINs
+already mapped), `--remap` (redo the column mapping).
 
 ## Data model
 
