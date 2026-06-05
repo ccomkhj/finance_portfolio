@@ -101,3 +101,38 @@ def test_parse_rows_collects_errors_with_row_numbers():
     assert "unknown action" in errors[1]
     assert "ISIN" in errors[2]
     assert "quantity" in errors[3]
+
+
+from datetime import date as _date
+
+from portfolio.importer import ResolvedRow, dedupe_key, resolve_tickers, split_new
+
+
+def _parsed(i, isin, action="buy", qty=1.0, price=10.0):
+    return ParsedRow(i, _date(2026, 4, 19), isin, action, qty, price, "EUR")
+
+
+def test_resolve_tickers_maps_and_collects_unknowns_in_order():
+    rows = [_parsed(0, "IE00A"), _parsed(1, "IE00B"), _parsed(2, "IE00A"), _parsed(3, "IE00C")]
+    resolved, unknown = resolve_tickers(rows, {"IE00A": "AAA.DE"})
+    assert unknown == ["IE00B", "IE00C"]
+    assert [r.ticker for r in resolved] == ["AAA.DE", "AAA.DE"]
+    assert resolved[0].isin == "IE00A"
+
+
+def test_split_new_skips_existing_and_within_batch_dups():
+    r1 = ResolvedRow(0, _date(2026, 4, 19), "IE00A", "AAA.DE", "buy", 1.0, 10.0, "EUR")
+    r2 = ResolvedRow(1, _date(2026, 4, 19), "IE00A", "AAA.DE", "buy", 1.0, 10.0, "EUR")  # dup of r1
+    r3 = ResolvedRow(2, _date(2026, 4, 20), "IE00A", "AAA.DE", "buy", 2.0, 10.0, "EUR")
+    existing = {dedupe_key(_date(2026, 4, 18), "AAA.DE", "buy", 5.0, 9.0)}
+    new, dups = split_new([r1, r2, r3], existing)
+    assert [r.source_index for r in new] == [0, 2]
+    assert [r.source_index for r in dups] == [1]
+
+
+def test_split_new_detects_existing_match():
+    r = ResolvedRow(0, _date(2026, 4, 18), "AAA.DE", "AAA.DE", "buy", 5.0, 9.0, "EUR")
+    existing = {dedupe_key(_date(2026, 4, 18), "AAA.DE", "buy", 5.0, 9.0)}
+    new, dups = split_new([r], existing)
+    assert new == []
+    assert dups == [r]

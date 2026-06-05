@@ -105,3 +105,57 @@ def parse_rows(
         except (ValueError, KeyError) as e:
             errors.append(f"row {i + 1}: {e}")
     return rows, errors
+
+
+@dataclass(frozen=True)
+class ResolvedRow:
+    source_index: int
+    date: date
+    isin: str
+    ticker: str
+    action: str
+    quantity: float
+    price: float
+    currency: str
+
+
+def resolve_tickers(
+    rows: list[ParsedRow], isin_map: dict[str, str]
+) -> tuple[list[ResolvedRow], list[str]]:
+    resolved: list[ResolvedRow] = []
+    unknown: list[str] = []
+    seen_unknown: set[str] = set()
+    for r in rows:
+        ticker = isin_map.get(r.isin)
+        if ticker is None:
+            if r.isin not in seen_unknown:
+                seen_unknown.add(r.isin)
+                unknown.append(r.isin)
+            continue
+        resolved.append(
+            ResolvedRow(r.source_index, r.date, r.isin, ticker,
+                        r.action, r.quantity, r.price, r.currency)
+        )
+    return resolved, unknown
+
+
+def dedupe_key(
+    d: date, ticker: str, action: str, quantity: float, price: float
+) -> tuple:
+    return (d.isoformat(), ticker, action, round(quantity, 8), round(price, 8))
+
+
+def split_new(
+    rows: list[ResolvedRow], existing_keys: set[tuple]
+) -> tuple[list[ResolvedRow], list[ResolvedRow]]:
+    new: list[ResolvedRow] = []
+    duplicates: list[ResolvedRow] = []
+    seen = set(existing_keys)
+    for r in rows:
+        k = dedupe_key(r.date, r.ticker, r.action, r.quantity, r.price)
+        if k in seen:
+            duplicates.append(r)
+        else:
+            seen.add(k)
+            new.append(r)
+    return new, duplicates
