@@ -1,7 +1,7 @@
 import pytest
 
 from portfolio.positions import Position
-from portfolio.valuation import ValuedPosition, value_positions
+from portfolio.valuation import value_positions
 
 
 def test_value_positions_eur_asset_profit() -> None:
@@ -44,3 +44,18 @@ def test_value_positions_skips_nan_price() -> None:
 
 def test_value_positions_empty_input() -> None:
     assert value_positions([], {}, {"EUR": 1.0}) == []
+
+
+def test_value_positions_missing_fx_raises() -> None:
+    positions = [Position(ticker="AAPL", quantity=5.0, avg_cost_eur=180.0, currency="USD")]
+    prices = {"AAPL": 200.0}
+    with pytest.raises(KeyError, match="missing FX rate for USD"):
+        value_positions(positions, prices, fx_rates={"EUR": 1.0})
+
+
+def test_value_positions_zero_cost_basis_gives_zero_pct() -> None:
+    # A position with zero cost basis must not divide-by-zero on pnl_pct.
+    positions = [Position(ticker="FREE.DE", quantity=10.0, avg_cost_eur=0.0, currency="EUR")]
+    [vp] = value_positions(positions, {"FREE.DE": 5.0}, {"EUR": 1.0})
+    assert vp.pnl_eur == pytest.approx(50.0)
+    assert vp.pnl_pct == 0.0

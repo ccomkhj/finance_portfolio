@@ -7,8 +7,15 @@ from datetime import date
 from pathlib import Path
 
 from portfolio.config import load_config
+from portfolio.income import compute_income, compute_net, yield_tickers_needed
 from portfolio.positions import compute_positions, enrich_transactions_with_eur
-from portfolio.prices import fetch_fx_eur, fetch_historical_fx_eur, fetch_prices
+from portfolio.prices import (
+    fetch_dividend_yields,
+    fetch_fx_eur,
+    fetch_historical_fx_eur,
+    fetch_names,
+    fetch_prices,
+)
 from portfolio.rebalance import compute_rebalance
 from portfolio.transactions import load_transactions
 from portfolio.valuation import value_positions
@@ -33,6 +40,11 @@ def main(argv: list[str] | None = None) -> int:
         sp.add_argument("--date", dest="tx_date", type=date.fromisoformat, default=None)
 
     sub.add_parser("show")
+    sp_income = sub.add_parser("income", help="estimate monthly/annual income (economic vs cash)")
+    sp_income.add_argument(
+        "--net", action="store_true",
+        help="show after-tax figures (German flat rate + Teilfreistellung from config)",
+    )
     sub.add_parser("check")
     sp_init = sub.add_parser("init")
     sp_init.add_argument("--force", action="store_true", help="overwrite non-empty data files (backed up to .bak)")
@@ -54,6 +66,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_add(args)
         if args.command == "show":
             return _cmd_show(args)
+        if args.command == "income":
+            return _cmd_income(args)
         if args.command == "check":
             return _cmd_check(args)
         if args.command == "init":
@@ -122,6 +136,99 @@ def _cmd_show(args: argparse.Namespace) -> int:
         print(
             f"{a.category:<15} {a.current_weight*100:>9.2f}% "
             f"{a.target_weight*100:>9.2f}% {a.delta_eur:>12.2f}"
+        )
+
+    yields = fetch_dividend_yields(yield_tickers_needed(valued, config.income))
+    report = compute_income(
+        valued, yields, config.income,
+        config.cash_balance_eur, config.cash_interest_pct,
+    )
+    print()
+    print(
+        f"INCOME (gross)  economic ~{report.total_economic_monthly_eur:,.2f}/mo "
+        f"({report.total_economic_annual_eur:,.2f}/yr) · "
+        f"cash ~{report.total_cash_monthly_eur:,.2f}/mo "
+        f"({report.total_cash_annual_eur:,.2f}/yr)   [portfolio income for detail]"
+    )
+    return 0
+
+
+def _cmd_income(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    tx_df = load_transactions(args.transactions)
+    orphans = sorted(set(tx_df["ticker"]) - config.all_tickers())
+    if orphans:
+        print(f"error: transaction tickers not in config: {orphans}", file=sys.stderr)
+        return 1
+    enriched = enrich_transactions_with_eur(tx_df, fetch_historical_fx_eur)
+    positions = compute_positions(enriched)
+
+    prices = fetch_prices([p.ticker for p in positions])
+    currencies = sorted({p.currency for p in positions} | {"EUR"})
+    fx = fetch_fx_eur(currencies)
+    valued = value_positions(positions, prices, fx)
+
+    yields = fetch_dividend_yields(yield_tickers_needed(valued, config.income))
+    names = fetch_names([h.position.ticker for h in valued])
+    report = compute_income(
+        valued, yields, config.income,
+        config.cash_balance_eur, config.cash_interest_pct,
+    )
+
+    def _name(ticker: str) -> str:
+        return names.get(ticker, ticker)[:28]
+
+    # In --net mode every income figure is shown after tax; the per-holding net
+    # holdings are parallel to report.holdings, so we zip them and the cash line
+    # and totals come from the net report.
+    net = compute_net(report, config.tax) if args.net else None
+    net_holdings = net.holdings if net else [None] * len(report.holdings)
+    if net:
+        print(
+            f"Income estimate — net (after ~{config.tax.rate_pct:.3f}% tax, "
+            "Teilfreistellung-aware), annualised"
+        )
+    else:
+        print("Income estimate — gross (pre-tax), annualised")
+
+    print(
+        f"{'TICKER':<10} {'NAME':<28} {'VALUE EUR':>12} {'YIELD%':>8} "
+        f"{'ECON/MO':>10} {'ECON/YR':>10} {'CASH/MO':>10} {'CASH/YR':>10}  SOURCE"
+    )
+    for h, nh in zip(report.holdings, net_holdings):
+        if not h.resolved:
+            print(
+                f"{h.ticker:<10} {_name(h.ticker):<28} {h.market_value_eur:>12.2f} {'n/a':>8} "
+                f"{'n/a':>10} {'n/a':>10} {'n/a':>10} {'n/a':>10}  unresolved"
+            )
+            continue
+        econ = nh.economic_annual_eur if nh else h.economic_annual_eur
+        cash = nh.cash_annual_eur if nh else h.cash_annual_eur
+        print(
+            f"{h.ticker:<10} {_name(h.ticker):<28} {h.market_value_eur:>12.2f} {h.yield_pct:>7.2f}% "
+            f"{econ/12:>10.2f} {econ:>10.2f} {cash/12:>10.2f} {cash:>10.2f}  {h.source}"
+        )
+
+    cash_annual = net.cash_annual_eur if net else report.cash_annual_eur
+    print(
+        f"{'cash':<10} {'Cash':<28} {report.cash_balance_eur:>12.2f} {report.cash_interest_pct:>7.2f}% "
+        f"{cash_annual/12:>10.2f} {cash_annual:>10.2f} "
+        f"{cash_annual/12:>10.2f} {cash_annual:>10.2f}  cash"
+    )
+
+    totals = net if net else report
+    print(
+        f"{'TOTAL':<10} {'':<28} {'':>12} {'':>8} "
+        f"{totals.total_economic_monthly_eur:>10.2f} {totals.total_economic_annual_eur:>10.2f} "
+        f"{totals.total_cash_monthly_eur:>10.2f} {totals.total_cash_annual_eur:>10.2f}"
+    )
+
+    unresolved = [h.ticker for h in report.holdings if not h.resolved]
+    if unresolved:
+        print(
+            f"warning: no yield for {unresolved}; counted as 0 — "
+            "set a proxy or yield_pct in config income:",
+            file=sys.stderr,
         )
     return 0
 

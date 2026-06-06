@@ -80,6 +80,37 @@ def test_compute_positions_rejects_oversell() -> None:
         compute_positions(df)
 
 
+def test_compute_positions_requires_cost_eur_column() -> None:
+    df = tx_df([
+        {"date": "2026-01-15", "ticker": "VWCE.DE", "action": "buy",
+         "quantity": 10.0, "price": 98.50, "currency": "EUR"},
+    ])
+    with pytest.raises(ValueError, match="must include a 'cost_eur' column"):
+        compute_positions(df)
+
+
+def test_compute_positions_rejects_unknown_action() -> None:
+    df = tx_df([
+        {"date": "2026-01-15", "ticker": "VWCE.DE", "action": "split",
+         "quantity": 10.0, "price": 98.50, "currency": "EUR", "cost_eur": 985.0},
+    ])
+    with pytest.raises(ValueError, match="unknown action 'split'"):
+        compute_positions(df)
+
+
+def test_enrich_transactions_with_eur_empty_dataframe() -> None:
+    df = tx_df([
+        {"date": "2026-01-15", "ticker": "VWCE.DE", "action": "buy",
+         "quantity": 10.0, "price": 98.50, "currency": "EUR"},
+    ]).iloc[0:0]
+
+    out = enrich_transactions_with_eur(df, lambda c, d: 1.0)
+
+    assert "cost_eur" in out.columns
+    assert out["cost_eur"].dtype == float
+    assert len(out) == 0
+
+
 def test_enrich_transactions_with_eur_uses_fx_for_usd() -> None:
     df = tx_df([
         {"date": "2026-01-15", "ticker": "VWCE.DE", "action": "buy",

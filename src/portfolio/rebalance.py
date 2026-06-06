@@ -26,10 +26,10 @@ def compute_rebalance(
 
     for v in valued:
         try:
-            cat = config.ticker_to_category(v.position.ticker)
+            cat_name = config.ticker_to_category(v.position.ticker)
         except KeyError:
             continue
-        category_value[cat] += v.market_value_eur
+        category_value[cat_name] += v.market_value_eur
 
     if "cash" in category_value:
         category_value["cash"] += cash_eur

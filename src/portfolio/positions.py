@@ -3,8 +3,15 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date as Date
+from typing import TypedDict
 
 import pandas as pd
+
+
+class _Holding(TypedDict):
+    quantity: float
+    cost_eur: float
+    currency: str
 
 
 @dataclass(frozen=True)
@@ -29,7 +36,7 @@ def enrich_transactions_with_eur(
             rate = 1.0
         else:
             rate = historical_fx(row["currency"], row["date"].date())
-        return row["quantity"] * row["price"] * rate
+        return float(row["quantity"] * row["price"] * rate)
 
     out = df.copy()
     if out.empty:
@@ -44,12 +51,12 @@ def compute_positions(transactions: pd.DataFrame) -> list[Position]:
     if "cost_eur" not in transactions.columns:
         raise ValueError("transactions DataFrame must include a 'cost_eur' column")
 
-    state: dict[str, dict] = {}
+    state: dict[str, _Holding] = {}
     for _, row in transactions.sort_values("date").iterrows():
         ticker = row["ticker"]
-        s = state.setdefault(ticker, {
-            "quantity": 0.0, "cost_eur": 0.0, "currency": row["currency"]
-        })
+        s = state.setdefault(ticker, _Holding(
+            quantity=0.0, cost_eur=0.0, currency=row["currency"]
+        ))
 
         if row["action"] == "buy":
             s["quantity"] += row["quantity"]

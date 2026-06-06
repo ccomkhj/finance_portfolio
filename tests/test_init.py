@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from portfolio import cli
 from portfolio.config import load_config
 from portfolio.mutations import ValidationError, init_config
 
@@ -169,7 +170,54 @@ def test_init_config_refuses_config_without_categories_key(tmp_path: Path) -> No
         )
 
 
-from portfolio import cli
+def test_init_config_force_with_no_existing_files(tmp_path: Path) -> None:
+    """force=True on a fresh repo writes new files and creates no .bak copies."""
+    cfg = tmp_path / "config.yaml"
+    tx = tmp_path / "transactions.csv"
+    init_config(
+        config_path=cfg,
+        tx_path=tx,
+        cash_balance_eur=10.0,
+        categories=[("only", 1.0)],
+        force=True,
+    )
+    assert load_config(cfg).cash_balance_eur == 10.0
+    assert not (tmp_path / "config.yaml.bak").exists()
+    assert not (tmp_path / "transactions.csv.bak").exists()
+
+
+def test_init_config_refuses_unparseable_config(tmp_path: Path) -> None:
+    cfg = tmp_path / "config.yaml"
+    tx = tmp_path / "transactions.csv"
+    cfg.write_text("categories: [unbalanced\n")  # invalid YAML
+    tx.write_text(HEADER)
+    with pytest.raises(ValidationError, match="unparseable"):
+        init_config(
+            config_path=cfg, tx_path=tx, cash_balance_eur=0.0, categories=[("a", 1.0)]
+        )
+
+
+def test_init_config_refuses_non_mapping_config(tmp_path: Path) -> None:
+    cfg = tmp_path / "config.yaml"
+    tx = tmp_path / "transactions.csv"
+    cfg.write_text("- just\n- a\n- list\n")  # parses as a list, not a mapping
+    tx.write_text(HEADER)
+    with pytest.raises(ValidationError, match="unparseable"):
+        init_config(
+            config_path=cfg, tx_path=tx, cash_balance_eur=0.0, categories=[("a", 1.0)]
+        )
+
+
+def test_init_config_rejects_out_of_range_weight(tmp_path: Path) -> None:
+    cfg, tx = _seed_existing(tmp_path, with_categories=False, with_tx_rows=False)
+    # Sums to 1.0 but an individual weight exceeds 1.0.
+    with pytest.raises(ValidationError, match="out of range"):
+        init_config(
+            config_path=cfg,
+            tx_path=tx,
+            cash_balance_eur=0.0,
+            categories=[("a", 1.5), ("b", -0.5)],
+        )
 
 
 def _scripted_input(answers: list[str]):
