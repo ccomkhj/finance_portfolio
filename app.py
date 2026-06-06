@@ -8,6 +8,14 @@ import plotly.express as px
 import streamlit as st
 
 from portfolio.config import load_config
+from portfolio.income import (
+    IncomeReport,
+    NetReport,
+    TaxConfig,
+    compute_income,
+    compute_net,
+    yield_tickers_needed,
+)
 from portfolio.mutations import (
     ValidationError,
     add_category_ticker,
@@ -17,7 +25,13 @@ from portfolio.mutations import (
     set_target_weights,
 )
 from portfolio.positions import compute_positions, enrich_transactions_with_eur
-from portfolio.prices import fetch_fx_eur, fetch_historical_fx_eur, fetch_names, fetch_prices
+from portfolio.prices import (
+    fetch_dividend_yields,
+    fetch_fx_eur,
+    fetch_historical_fx_eur,
+    fetch_names,
+    fetch_prices,
+)
 from portfolio.rebalance import compute_rebalance
 from portfolio.transactions import load_transactions
 from portfolio.valuation import value_positions
@@ -55,6 +69,11 @@ def _cached_fx(currencies: tuple[str, ...]) -> dict[str, float]:
 @st.cache_data(ttl=24 * 3600)
 def _cached_names(tickers: tuple[str, ...]) -> dict[str, str]:
     return fetch_names(list(tickers))
+
+
+@st.cache_data(ttl=24 * 3600)
+def _cached_yields(tickers: tuple[str, ...]) -> dict[str, float]:
+    return fetch_dividend_yields(list(tickers))
 
 
 def _after_write() -> None:
@@ -98,9 +117,17 @@ def main() -> None:
     if missing:
         st.warning(f"No price available for: {', '.join(missing)} (excluded from valuation).")
 
+    income_yields = _cached_yields(tuple(yield_tickers_needed(valued, config.income)))
+    income = compute_income(
+        valued, income_yields, config.income,
+        config.cash_balance_eur, config.cash_interest_pct,
+    )
+
     overview, edit = st.tabs(["Overview", "Edit"])
     with overview:
         _render_summary(valued, config.cash_balance_eur)
+        st.divider()
+        _render_income(income, names, config.tax)
         st.divider()
         _render_allocation(valued, config, names)
         st.divider()
@@ -122,6 +149,91 @@ def _render_summary(valued, cash_eur: float) -> None:
     c2.metric("Cost basis (EUR)", f"€{total_cost:,.2f}")
     c3.metric("P&L (EUR)", f"€{pnl:,.2f}", f"{pnl_pct*100:+.2f}%")
     c4.metric("Cash (EUR)", f"€{cash_eur:,.2f}")
+
+
+def build_income_rows(
+    report: IncomeReport, names: dict[str, str], net: NetReport | None = None,
+) -> list[dict]:
+    """Per-holding + cash display rows. Unresolved holdings show 'n/a'. When a
+    NetReport is passed, the income columns are shown after tax."""
+    net_holdings = net.holdings if net else [None] * len(report.holdings)
+    rows: list[dict] = []
+    for h, nh in zip(report.holdings, net_holdings):
+        if not h.resolved:
+            rows.append({
+                "Ticker": h.ticker,
+                "Name": names.get(h.ticker, h.ticker),
+                "Value EUR": h.market_value_eur,
+                "Yield %": "n/a",
+                "Economic €/mo": "n/a",
+                "Economic €/yr": "n/a",
+                "Cash €/mo": "n/a",
+                "Cash €/yr": "n/a",
+                "Source": "unresolved",
+            })
+            continue
+        econ = nh.economic_annual_eur if nh else h.economic_annual_eur
+        cash = nh.cash_annual_eur if nh else h.cash_annual_eur
+        rows.append({
+            "Ticker": h.ticker,
+            "Name": names.get(h.ticker, h.ticker),
+            "Value EUR": h.market_value_eur,
+            "Yield %": h.yield_pct,
+            "Economic €/mo": econ / 12,
+            "Economic €/yr": econ,
+            "Cash €/mo": cash / 12,
+            "Cash €/yr": cash,
+            "Source": h.source,
+        })
+    cash_annual = net.cash_annual_eur if net else report.cash_annual_eur
+    rows.append({
+        "Ticker": "cash",
+        "Name": "Cash",
+        "Value EUR": report.cash_balance_eur,
+        "Yield %": report.cash_interest_pct,
+        "Economic €/mo": cash_annual / 12,
+        "Economic €/yr": cash_annual,
+        "Cash €/mo": cash_annual / 12,
+        "Cash €/yr": cash_annual,
+        "Source": "cash",
+    })
+    return rows
+
+
+def _render_income(report: IncomeReport, names: dict[str, str], tax: TaxConfig) -> None:
+    c1, c2 = st.columns([3, 1])
+    c1.subheader("Income estimate (annualised)")
+    net_mode = c2.toggle("Net of tax", value=False, key="income_net")
+
+    net = compute_net(report, tax) if net_mode else None
+    totals = net if net else report
+    if net_mode:
+        st.caption(
+            f"After ~{tax.rate_pct:.3f}% tax, Teilfreistellung-aware "
+            "(equity funds 30% exempt). A rough estimate — ignores the Sparer-Pauschbetrag."
+        )
+
+    c1, c2 = st.columns(2)
+    c1.metric(
+        "Economic income",
+        f"€{totals.total_economic_monthly_eur:,.2f}/mo",
+        f"€{totals.total_economic_annual_eur:,.2f}/yr",
+    )
+    c2.metric(
+        "Cash distributions",
+        f"€{totals.total_cash_monthly_eur:,.2f}/mo",
+        f"€{totals.total_cash_annual_eur:,.2f}/yr",
+    )
+    unresolved = [h.ticker for h in report.holdings if not h.resolved]
+    if unresolved:
+        st.warning(
+            f"No yield for {unresolved} — counted as €0. "
+            "Set a `proxy` or `yield_pct` under `income:` in config.yaml."
+        )
+    st.dataframe(
+        pd.DataFrame(build_income_rows(report, names, net=net)),
+        use_container_width=True, hide_index=True,
+    )
 
 
 def _render_allocation(valued, config, names: dict[str, str]) -> None:

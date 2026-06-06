@@ -67,6 +67,10 @@ uv run portfolio check
 # Terminal snapshot
 uv run portfolio show
 
+# Estimate income (dividends + cash interest), gross, annualised
+uv run portfolio income
+uv run portfolio income --net   # after German tax (rate + Teilfreistellung from config)
+
 # Wipe and re-initialise config + transactions (interactive)
 uv run portfolio init             # refuses if existing data is non-empty
 uv run portfolio init --force     # overwrites; existing files renamed *.bak
@@ -96,6 +100,61 @@ duplicate rows are skipped.
 Flags: `--dry-run` (preview only), `--yes` (skip confirmation; requires all ISINs
 already mapped), `--remap` (redo the column mapping).
 
+### Income estimates
+
+`portfolio income` estimates how much your portfolio earns, gross (pre-tax),
+annualised and as a smoothed monthly run-rate. It reports **two** figures per
+holding, because they differ:
+
+- **Economic income** — what a holding *earns* (market value × yield), including
+  income reinvested internally by accumulating ETFs.
+- **Cash distribution** — what is actually *paid out* to you: dividends from
+  distributing holdings + interest on your cash balance. Accumulating ETFs
+  contribute €0 here.
+
+Yields come from yfinance's trailing-12-month dividends. Accumulating ETFs
+report ~0% there (they don't distribute), so for those you point at a
+**distributing sibling** ("proxy") whose live yield stands in, or set a manual
+yield. Configure this in `config.yaml`:
+
+```yaml
+cash_balance_eur: 11202.25
+cash_interest_pct: 2.0          # interest your broker pays on cash (annual %)
+
+income:                          # optional; omit a ticker to use its own live yield
+  WEBG.DE: { proxy: VWRL.DE }    # accumulating → borrow a distributing twin's yield
+  SXR8.DE: { proxy: VUSA.DE }
+  EUNA.DE: { yield_pct: 2.4 }    # no live twin → manual annual yield %
+  # VOW.DE, SHL.DE omitted → their own yfinance dividend yield is used
+```
+
+Each `income` entry sets **exactly one** of `proxy` or `yield_pct`. A holding
+whose yield can't be resolved (e.g. a delisted proxy) is shown as `n/a`, counted
+as €0, and flagged with a warning so the total is visibly incomplete. The same
+breakdown appears in the dashboard's Overview tab and as a one-line summary at
+the foot of `portfolio show`.
+
+#### Net of tax
+
+`portfolio income --net` (and a dashboard toggle) shows figures after a flat
+German capital-income tax with per-holding **Teilfreistellung** (partial
+exemption). Configure it under `tax:` — omit it for sensible defaults:
+
+```yaml
+tax:
+  rate_pct: 26.375                 # Kapitalertragsteuer + Soli; ~27.8–28 with church tax
+  default_teilfreistellung: equity # class for holdings not listed below
+  teilfreistellung:
+    VOW.DE: none                   # individual stocks & bond funds get no exemption
+    SHL.DE: none
+    EUNA.DE: none                  # equity ETFs inherit the 30%-exempt default
+```
+
+It's a rough estimate — it ignores the Sparer-Pauschbetrag allowance and the
+accumulating-fund Vorabpauschale. Holdings left on the equity default that are
+actually stocks or bond funds will overstate their net; the `tune-income` skill's
+audit flags these.
+
 ## Data model
 
 Two files. That's it.
@@ -112,6 +171,8 @@ A small price cache is written to `data/.price_cache.json` (gitignored, 10-minut
 - **Category** — a bucket you want to target a weight for (e.g. `global-equity: 70%`).
 - **Drift** — how far your current allocation is from target. The `show` table's `DELTA EUR` column quantifies it.
 - **`.DE` / `.AS` tickers** — Xetra (Frankfurt) and Euronext Amsterdam listings, the EU-domiciled UCITS ETFs most Trade Republic users hold.
+- **Economic income vs cash distribution** — what a holding earns vs what it pays out. Accumulating ETFs earn income but distribute none. See [Income estimates](#income-estimates).
+- **Income proxy** — a distributing sibling ETF used to estimate an accumulating fund's yield (its own is ~0% on yfinance).
 
 ## Tests
 

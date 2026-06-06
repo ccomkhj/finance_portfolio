@@ -2,7 +2,7 @@ import pytest
 
 from portfolio.config import Category, Config
 from portfolio.positions import Position
-from portfolio.rebalance import RebalanceAction, compute_rebalance
+from portfolio.rebalance import compute_rebalance
 from portfolio.valuation import ValuedPosition
 
 
@@ -84,3 +84,18 @@ def test_compute_rebalance_empty_portfolio_returns_zero_deltas() -> None:
     [action] = actions
     assert action.current_weight == 0.0
     assert action.delta_eur == 0.0
+
+
+def test_compute_rebalance_ignores_uncategorized_ticker() -> None:
+    config = make_config({"equity": (1.0, ("VWCE.DE",))}, cash=0.0)
+    # ORPHAN.DE belongs to no category: its value must not land in any bucket,
+    # though it still counts toward the portfolio total.
+    actions = compute_rebalance(
+        [vp("VWCE.DE", "EUR", 600.0), vp("ORPHAN.DE", "EUR", 400.0)],
+        config,
+        cash_eur=0.0,
+    )
+    [action] = actions
+    assert action.category == "equity"
+    assert action.current_weight == pytest.approx(0.6)  # 600 categorized / 1000 total
+    assert action.delta_eur == pytest.approx(400.0)      # target 1000, has 600

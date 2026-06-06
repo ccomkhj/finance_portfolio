@@ -1,22 +1,31 @@
 base_currency: EUR
 
 categories:
-  global-equity:
-    target_weight: 0.70
+  core-etf:
+    target_weight: 0.50
     tickers:
-      - VWCE.DE
-      - IWDA.AS
-  us-equity:
-    target_weight: 0.15
+      - WEBG.DE
+      - SXR8.DE
+  single-stocks:
+    target_weight: 0.125
     tickers:
-      - IUSA.AS
-      - VUSA.AS
+      - VOW.DE
+      - SHL.DE
   bonds:
-    target_weight: 0.10
+    target_weight: 0.30
     tickers:
       - EUNA.DE
   cash:
-    target_weight: 0.05
+    target_weight: 0.075
     tickers: []
 
-cash_balance_eur: 1250.00
+cash_balance_eur: 11202.25
+cash_interest_pct: 2.0              # annual interest your bank pays on cash (bank-specific)
+
+tax:
+  rate_pct: 26.375                  # Kapitalertragsteuer 25% + Soli; no church tax
+  default_teilfreistellung: equity  # equity ETFs (WEBG.DE, SXR8.DE) keep the 30% exemption
+  teilfreistellung:
+    VOW.DE: none                    # individual stock — no exemption
+    SHL.DE: none                    # individual stock — no exemption
+    EUNA.DE: none                   # bond fund — no exemption

@@ -102,12 +102,89 @@ def test_main_show_renders_table(
     monkeypatch.setattr(cli, "fetch_historical_fx_eur", lambda cur, d: 1.0)
     monkeypatch.setattr(cli, "fetch_prices", lambda tickers: {"VWCE.DE": 150.0})
     monkeypatch.setattr(cli, "fetch_fx_eur", lambda currencies: {"EUR": 1.0})
+    monkeypatch.setattr(cli, "fetch_dividend_yields", lambda tickers, **kw: {"VWCE.DE": 0.02})
 
     rc = cli.main(_argv(cfg, tx, "show"))
     out = capsys.readouterr().out
     assert rc == 0
     assert "VWCE.DE" in out
     assert "CATEGORY" in out
+
+
+def test_main_show_includes_income_summary(
+    repo: tuple[Path, Path],
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg, tx = repo
+    _stub_income_fetchers(monkeypatch, {"VWCE.DE": 0.02})
+
+    rc = cli.main(_argv(cfg, tx, "show"))
+    out = capsys.readouterr().out
+    assert rc == 0
+    # one-line income run-rate summary folded into show
+    assert "INCOME" in out
+    assert "30.00" in out  # annual economic run-rate
+
+
+# --- income (network fetchers stubbed) ---------------------------------------
+
+def _stub_income_fetchers(monkeypatch: pytest.MonkeyPatch, yields: dict[str, float]) -> None:
+    monkeypatch.setattr(cli, "fetch_historical_fx_eur", lambda cur, d: 1.0)
+    monkeypatch.setattr(cli, "fetch_prices", lambda tickers: {"VWCE.DE": 150.0})
+    monkeypatch.setattr(cli, "fetch_fx_eur", lambda currencies: {"EUR": 1.0})
+    monkeypatch.setattr(cli, "fetch_dividend_yields", lambda tickers, **kw: yields)
+    monkeypatch.setattr(cli, "fetch_names", lambda tickers: {"VWCE.DE": "Vanguard FTSE All-World"})
+
+
+def test_main_income_renders(
+    repo: tuple[Path, Path],
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg, tx = repo
+    _stub_income_fetchers(monkeypatch, {"VWCE.DE": 0.02})  # 10 sh × 150 = 1500 mv → 30/yr
+
+    rc = cli.main(_argv(cfg, tx, "income"))
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "VWCE.DE" in out
+    assert "Vanguard FTSE All-World" in out  # friendly company name
+    assert "30.00" in out   # annual economic income
+    assert "TOTAL" in out
+
+
+def test_main_income_net_applies_tax(
+    repo: tuple[Path, Path],
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg, tx = repo
+    _stub_income_fetchers(monkeypatch, {"VWCE.DE": 0.02})  # gross economic = 30.00
+
+    rc = cli.main(_argv(cfg, tx, "income", "--net"))
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "net" in out.lower()
+    # equity-fund default: 30 * (1 - 0.26375*0.70) = 24.46
+    assert "24.46" in out
+    assert "30.00" not in out  # gross figure should not appear in net mode
+
+
+def test_main_income_warns_on_unresolved(
+    repo: tuple[Path, Path],
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg, tx = repo
+    _stub_income_fetchers(monkeypatch, {"VWCE.DE": float("nan")})
+
+    rc = cli.main(_argv(cfg, tx, "income"))
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "n/a" in captured.out
+    assert "warning" in captured.err.lower()
+    assert "VWCE.DE" in captured.err
 
 
 def test_main_show_orphan_returns_1(

@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .ruff_cache/
+.coverage
 .venv/
 .DS_Store
 /dist/
@@ -12,3 +13,9 @@ __pycache__/
 
 /data/.price_cache.json
 docs/superpowers/
+
+# grill-with-docs artifacts
+/CONTEXT.md
+/CONTEXT-MAP.md
+/docs/adr/
+/docs/improvement-rubric.md

@@ -6,6 +6,7 @@ import sys
 import tempfile
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from typing import TypedDict, cast
 
 import yfinance as yf
 
@@ -13,15 +14,20 @@ PRICE_CACHE_PATH = Path("data/.price_cache.json")
 PRICE_CACHE_TTL_SECONDS = 600
 
 
-def _load_cache(path: Path) -> dict[str, dict]:
+class CacheEntry(TypedDict):
+    price: float
+    fetched_at: str
+
+
+def _load_cache(path: Path) -> dict[str, CacheEntry]:
     """Read the cache file. Missing or corrupt → empty dict."""
     try:
-        return json.loads(path.read_text())
+        return cast("dict[str, CacheEntry]", json.loads(path.read_text()))
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
 
 
-def _save_cache(path: Path, cache: dict[str, dict]) -> None:
+def _save_cache(path: Path, cache: dict[str, CacheEntry]) -> None:
     """Atomic write: tmp file in same dir, fsync, rename."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=".price_cache.", suffix=".tmp")
@@ -88,7 +94,7 @@ def fetch_prices(
     return fresh
 
 
-def _is_fresh(entry: dict, now: datetime) -> bool:
+def _is_fresh(entry: CacheEntry, now: datetime) -> bool:
     try:
         fetched_at = datetime.fromisoformat(entry["fetched_at"].replace("Z", "+00:00"))
     except (KeyError, ValueError):
@@ -133,6 +139,59 @@ def fetch_names(tickers: list[str]) -> dict[str, str]:
             name = t
         names[t] = name
     return names
+
+
+# Annual payers (common in the EU — e.g. Volkswagen pays once each May) spend
+# part of every year in a "dead zone": the prior payment has aged out of the
+# trailing-365 window but the next hasn't posted yet, which would read as 0%.
+# When the window is empty we annualise the most recent payment instead, as long
+# as it's recent enough to still be a live dividend rather than one that's been
+# cut. ~15 months tolerates a late annual payment without resurrecting a stopped one.
+DIVIDEND_GRACE_DAYS = 455
+
+
+def _trailing_yield(
+    dividends: list[tuple[date, float]], price: float, asof: date
+) -> float:
+    """Trailing-12-month dividends ÷ price, as a fraction. NaN if price <= 0/NaN.
+
+    Falls back to annualising the most recent payment when nothing was paid in
+    the trailing 12 months but a payment is recent enough to still be live —
+    so annual payers don't flicker to 0% between yearly distributions.
+    """
+    if not (price > 0):  # also catches NaN
+        return float("nan")
+    trailing = sum(amt for d, amt in dividends if d >= asof - timedelta(days=365))
+    if trailing == 0 and dividends:
+        latest_date, latest_amt = max(dividends, key=lambda da: da[0])
+        if (asof - latest_date).days <= DIVIDEND_GRACE_DAYS:
+            trailing = latest_amt
+    return trailing / price
+
+
+def fetch_dividend_yields(
+    tickers: list[str], *, now: date | None = None
+) -> dict[str, float]:
+    """Return ticker -> trailing-12-month dividend yield (fraction).
+
+    0.0 means the holding genuinely paid nothing in the last year; NaN means the
+    yield could not be sourced (no price, or yfinance failed for that ticker).
+    """
+    asof = now or datetime.now(timezone.utc).date()
+    out: dict[str, float] = {}
+    for ticker in tickers:
+        try:
+            t = yf.Ticker(ticker)
+            divs = [
+                (ts.date(), float(amt))
+                for ts, amt in t.dividends.items()
+            ]
+            closes = t.history(period="5d", interval="1d", auto_adjust=False)["Close"].dropna()
+            price = float(closes.iloc[-1]) if len(closes) else float("nan")
+            out[ticker] = _trailing_yield(divs, price, asof)
+        except Exception:
+            out[ticker] = float("nan")
+    return out
 
 
 def fetch_fx_eur(currencies: list[str]) -> dict[str, float]:
