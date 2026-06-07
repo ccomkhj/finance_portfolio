@@ -109,6 +109,9 @@ def main() -> None:
         "Drift threshold (%)", min_value=0.0, max_value=5.0, value=1.0, step=0.1
     )
 
+    if st.sidebar.button("📋 Export status (Markdown)"):
+        st.session_state["show_export"] = True
+
     read_only = is_read_only_mode()
     if read_only:
         _render_demo_banner()
@@ -154,6 +157,13 @@ def main() -> None:
     tabs = st.tabs(["Overview"] if read_only else ["Overview", "Edit"])
     overview = tabs[0]
     with overview:
+        if st.session_state.get("show_export"):
+            status_md = build_status_markdown(
+                valued, config, income, names, drift_threshold,
+                tax=config.tax, price_source=price_source if read_only else None,
+            )
+            _render_export(status_md)
+            st.divider()
         _render_summary(valued, config.cash_balance_eur)
         st.divider()
         _render_income(income, names, config.tax)
@@ -240,6 +250,143 @@ def build_income_rows(
         "Source": "cash",
     })
     return rows
+
+
+def _fmt_eur(value: float) -> str:
+    return f"€{value:,.2f}"
+
+
+def build_status_markdown(
+    valued,
+    config,
+    income: IncomeReport,
+    names: dict[str, str],
+    drift_threshold_pct: float,
+    *,
+    tax: TaxConfig | None = None,
+    price_source: str | None = None,
+    as_of: datetime | None = None,
+) -> str:
+    """Render the current portfolio status as a self-contained Markdown report.
+
+    Pure (no Streamlit / network) so it can be unit-tested and pasted into an
+    external AI tool for further analysis. Mirrors the dashboard's Overview tab:
+    summary, holdings, allocation vs target, P&L, and income estimate.
+    """
+    as_of = as_of or datetime.now()
+    cash_eur = config.cash_balance_eur
+
+    total_value = sum(v.market_value_eur for v in valued)
+    total_cost = sum(v.position.quantity * v.position.avg_cost_eur for v in valued)
+    pnl = total_value - total_cost
+    pnl_pct = (pnl / total_cost) if total_cost else 0.0
+
+    lines: list[str] = []
+    lines.append(f"# Portfolio status — {as_of:%Y-%m-%d %H:%M}")
+    lines.append("")
+    if price_source == "snapshot":
+        lines.append("> ⚠️ Prices are **sample** data (live feed unavailable).")
+        lines.append("")
+
+    # Summary -----------------------------------------------------------------
+    lines.append("## Summary")
+    lines.append("")
+    lines.append("| Metric | Value |")
+    lines.append("| --- | ---: |")
+    lines.append(f"| Total value (incl. cash) | {_fmt_eur(total_value + cash_eur)} |")
+    lines.append(f"| Invested value | {_fmt_eur(total_value)} |")
+    lines.append(f"| Cost basis | {_fmt_eur(total_cost)} |")
+    lines.append(f"| P&L | {_fmt_eur(pnl)} ({pnl_pct * 100:+.2f}%) |")
+    lines.append(f"| Cash | {_fmt_eur(cash_eur)} |")
+    lines.append("")
+
+    # Holdings ----------------------------------------------------------------
+    lines.append("## Holdings")
+    lines.append("")
+    if not valued:
+        lines.append("_No positions._")
+    else:
+        lines.append("| Ticker | Name | Category | Qty | Avg cost (EUR) | Price | Value (EUR) | P&L (EUR) | P&L % |")
+        lines.append("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |")
+        for v in sorted(valued, key=lambda x: x.market_value_eur, reverse=True):
+            t = v.position.ticker
+            try:
+                cat = config.ticker_to_category(t)
+            except KeyError:
+                cat = "unassigned"
+            lines.append(
+                f"| {t} | {names.get(t, t)} | {cat} | {v.position.quantity:,.4f} | "
+                f"{v.position.avg_cost_eur:,.2f} | {v.current_price:,.2f} | "
+                f"{v.market_value_eur:,.2f} | {v.pnl_eur:+,.2f} | {v.pnl_pct * 100:+.2f}% |"
+            )
+    lines.append("")
+
+    # Allocation vs target ----------------------------------------------------
+    lines.append("## Allocation vs target")
+    lines.append("")
+    lines.append(f"_Drift threshold: {drift_threshold_pct:.1f}%_")
+    lines.append("")
+    lines.append("| Category | Current % | Target % | Drift % | Suggested action |")
+    lines.append("| --- | ---: | ---: | ---: | --- |")
+    for a in compute_rebalance(valued, config, cash_eur):
+        drift_pct = (a.current_weight - a.target_weight) * 100
+        if abs(drift_pct) < drift_threshold_pct:
+            action = "Hold"
+        elif a.delta_eur > 0:
+            action = f"Buy {_fmt_eur(a.delta_eur)}"
+        else:
+            action = f"Sell {_fmt_eur(abs(a.delta_eur))}"
+        lines.append(
+            f"| {a.category} | {a.current_weight * 100:.1f}% | "
+            f"{a.target_weight * 100:.1f}% | {drift_pct:+.1f}% | {action} |"
+        )
+    lines.append("")
+
+    # Income ------------------------------------------------------------------
+    net = compute_net(income, tax) if tax else None
+    lines.append("## Income estimate (annualised)")
+    lines.append("")
+    lines.append(
+        f"- **Economic income:** {_fmt_eur(income.total_economic_monthly_eur)}/mo "
+        f"({_fmt_eur(income.total_economic_annual_eur)}/yr)"
+    )
+    lines.append(
+        f"- **Cash distributions:** {_fmt_eur(income.total_cash_monthly_eur)}/mo "
+        f"({_fmt_eur(income.total_cash_annual_eur)}/yr)"
+    )
+    if net:
+        lines.append(
+            f"- **Net of tax** (~{tax.rate_pct:.3f}%, Teilfreistellung-aware): "
+            f"economic {_fmt_eur(net.total_economic_annual_eur)}/yr · "
+            f"cash {_fmt_eur(net.total_cash_annual_eur)}/yr"
+        )
+    unresolved = [h.ticker for h in income.holdings if not h.resolved]
+    if unresolved:
+        lines.append(
+            f"- ⚠️ No yield for {', '.join(unresolved)} — counted as €0."
+        )
+    lines.append("")
+
+    lines.append(
+        "_Generated by the portfolio dashboard. Estimates only — not financial advice._"
+    )
+    return "\n".join(lines)
+
+
+def _render_export(status_md: str) -> None:
+    with st.expander("📋 Portfolio status (Markdown)", expanded=True):
+        st.caption(
+            "Copy this and paste it into ChatGPT or another AI tool for further "
+            "analysis. Use the copy icon in the top-right of the block, or download."
+        )
+        st.code(status_md, language="markdown")
+        st.download_button(
+            "Download portfolio_status.md",
+            data=status_md,
+            file_name=f"portfolio_status_{datetime.now():%Y%m%d_%H%M}.md",
+            mime="text/markdown",
+            key="export_download",
+        )
 
 
 def _render_income(report: IncomeReport, names: dict[str, str], tax: TaxConfig) -> None:
