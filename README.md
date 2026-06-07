@@ -112,8 +112,16 @@ already excludes `data/private/`, `data/*.bak`, and `broker_exports/`.
 
 ## Public demo
 
-Deploy `streamlit_app.py` on Streamlit Community Cloud for a safe public demo.
-It sets `PORTFOLIO_READ_ONLY=1`, uses the synthetic data, and hides the Edit tab.
+Deploy on [Streamlit Community Cloud](https://share.streamlit.io/) for a safe
+public demo. Point a new app at your fork with:
+
+- **Main file path:** `streamlit_app.py`
+- **Python version:** 3.12+
+- **Branch:** `main`
+
+The entrypoint sets `PORTFOLIO_READ_ONLY=1`, so the demo uses the bundled
+synthetic data and hides the Edit tab — no writes are exposed. Streamlit Cloud
+installs dependencies from `requirements.txt` (it does not read `pyproject.toml`).
 
 For public launch and revenue notes, see [docs/PUBLIC_LAUNCH.md](docs/PUBLIC_LAUNCH.md).
 

@@ -226,7 +226,6 @@ def test_set_target_weights_rejects_out_of_range_weight(data_dir: Path) -> None:
 
 
 def test_import_profile_roundtrip(tmp_path):
-    from pathlib import Path
     from portfolio.mutations import read_import_profile, set_import_profile
 
     cfg = tmp_path / "config.yaml"

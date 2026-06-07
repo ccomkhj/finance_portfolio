@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
+from typing import Any
+
+# (date_iso, ticker, action, quantity, price) — identity of a transaction for
+# de-duplication on import.
+DedupeKey = tuple[str, str, str, float, float]
 
 
 def normalize_number(raw: str, decimal: str) -> float:
@@ -57,7 +62,7 @@ class ImportProfile:
     actions: dict[str, str]
 
     @classmethod
-    def from_dict(cls, d: dict) -> "ImportProfile":
+    def from_dict(cls, d: dict[str, Any]) -> "ImportProfile":
         return cls(
             columns=dict(d["columns"]),
             decimal=d["decimal"],
@@ -65,7 +70,7 @@ class ImportProfile:
             actions={str(k).lower(): v for k, v in (d.get("actions") or {}).items()},
         )
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "columns": dict(self.columns),
             "decimal": self.decimal,
@@ -151,12 +156,12 @@ def resolve_tickers(
 
 def dedupe_key(
     d: date, ticker: str, action: str, quantity: float, price: float
-) -> tuple:
+) -> DedupeKey:
     return (d.isoformat(), ticker, action, round(quantity, 8), round(price, 8))
 
 
 def split_new(
-    rows: list[ResolvedRow], existing_keys: set[tuple]
+    rows: list[ResolvedRow], existing_keys: set[DedupeKey]
 ) -> tuple[list[ResolvedRow], list[ResolvedRow]]:
     new: list[ResolvedRow] = []
     duplicates: list[ResolvedRow] = []

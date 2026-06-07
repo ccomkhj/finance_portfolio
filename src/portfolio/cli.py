@@ -20,6 +20,12 @@ from portfolio.rebalance import compute_rebalance
 from portfolio.transactions import load_transactions
 from portfolio.valuation import value_positions
 from portfolio.mutations import ValidationError, init_config
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import pandas as pd
+
+    from portfolio.importer import ResolvedRow
 
 DEFAULT_TX_PATH = Path("data/transactions.csv")
 DEFAULT_CONFIG_PATH = Path("data/config.yaml")
@@ -401,7 +407,7 @@ def _pick_column(field: str, headers: list[str]) -> str | None:
         print("  invalid choice.")
 
 
-def _setup_profile(headers: list[str], records: list[dict]) -> dict:
+def _setup_profile(headers: list[str], records: list[dict[str, str]]) -> dict[str, Any]:
     columns: dict[str, str] = {}
     for field in ("date", "isin", "action", "quantity", "price"):
         col = _pick_column(field, headers)
@@ -451,12 +457,14 @@ def _prompt_isin(isin: str, categories: list[str]) -> tuple[str, str]:
         print("  invalid choice.")
 
 
-def _check_no_negative_holdings(tx_df, new_rows) -> str | None:
+def _check_no_negative_holdings(
+    tx_df: "pd.DataFrame", new_rows: "list[ResolvedRow]"
+) -> str | None:
     from collections import defaultdict
 
     # (date, rank, ticker, signed_qty) — rank 0 = buy, 1 = sell, so a same-day
     # buy is always applied before a same-day sell.
-    events: list[tuple] = []
+    events: list[tuple[date, int, str, float]] = []
     for d, t, a, q in zip(tx_df["date"], tx_df["ticker"], tx_df["action"], tx_df["quantity"]):
         dd = d.date() if hasattr(d, "date") else d
         events.append((dd, 0 if a == "buy" else 1, t, float(q) if a == "buy" else -float(q)))
@@ -493,8 +501,10 @@ def _cmd_import(args: argparse.Namespace) -> int:
     except Exception as e:
         print(f"error: cannot read {path}: {e}", file=sys.stderr)
         return 1
-    records = raw.to_dict("records")
-    headers = list(raw.columns)
+    records: list[dict[str, str]] = [
+        {str(k): str(v) for k, v in row.items()} for row in raw.to_dict("records")
+    ]
+    headers = [str(c) for c in raw.columns]
     if not records:
         print(f"error: {path} has no data rows", file=sys.stderr)
         return 1
@@ -509,8 +519,8 @@ def _cmd_import(args: argparse.Namespace) -> int:
     rows, errors = parse_rows(records, profile)
     if errors:
         print(f"error: {len(errors)} row(s) failed to parse:", file=sys.stderr)
-        for e in errors:
-            print(f"  {e}", file=sys.stderr)
+        for err in errors:
+            print(f"  {err}", file=sys.stderr)
         print("hint: fix the source file, or re-run with --remap to redo the mapping.", file=sys.stderr)
         return 1
 
