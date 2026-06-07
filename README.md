@@ -7,6 +7,9 @@
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-pytest-brightgreen.svg)](#develop)
+[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://financeportfolio.streamlit.app)
+
+**Live demo:** [financeportfolio.streamlit.app](https://financeportfolio.streamlit.app) — read-only, synthetic data.
 
 ![Dashboard](docs/dashboard.png)
 
@@ -61,15 +64,16 @@ TICKER            QTY    AVG EUR      PRICE    VALUE EUR    P&L EUR    P&L %
 VWCE.DE       10.0000      98.50     162.36      1623.60     638.60   64.83%
 IWDA.AS       12.0000      82.10     123.33      1479.96     494.76   50.22%
 IUSA.AS       15.0000      55.80      64.73       970.95     133.95   16.00%
+4GLD.DE        3.0000      72.00     121.12       363.36     147.36   68.22%
 VUSA.AS        5.0000     105.40     123.14       615.71      88.71   16.83%
 EUNA.DE       30.0000       4.80       4.91       147.30       3.30    2.29%
 
 CATEGORY         CURRENT %   TARGET %    DELTA EUR
-global-equity       77.05%     30.00%     -2863.96
-individual-stocks    0.00%      5.00%       304.38
-bonds                2.42%     35.00%      1983.33
-gold                 0.00%     10.00%       608.75
-cash                20.53%     20.00%       -32.50
+global-equity       72.71%     30.00%     -2754.96
+individual-stocks    0.00%      5.00%       322.54
+bonds                2.28%     35.00%      2110.51
+gold                 5.63%     10.00%       281.73
+cash                19.38%     20.00%        40.18
 
 INCOME (gross)  economic ~6.27/mo (75.21/yr) · cash ~3.22/mo (38.67/yr)   [portfolio income for detail]
 ```
@@ -115,16 +119,22 @@ already excludes `data/private/`, `data/*.bak`, and `broker_exports/`.
 
 ## Public demo
 
-Deploy on [Streamlit Community Cloud](https://share.streamlit.io/) for a safe
-public demo. Point a new app at your fork with:
+The [live demo](https://financeportfolio.streamlit.app) runs on
+[Streamlit Community Cloud](https://share.streamlit.io/). To deploy your own,
+point a new app at your fork:
 
 - **Main file path:** `streamlit_app.py`
-- **Python version:** 3.12+
 - **Branch:** `main`
+- **Python version:** set **3.12** in *Advanced settings* (Streamlit Cloud does
+  not read a `runtime.txt`; the app requires 3.12+).
+- **Sharing:** set to **Public** so logged-out visitors can open it.
 
 The entrypoint sets `PORTFOLIO_READ_ONLY=1`, so the demo uses the bundled
 synthetic data and hides the Edit tab — no writes are exposed. Streamlit Cloud
-installs dependencies from `requirements.txt` (it does not read `pyproject.toml`).
+installs the pinned dependencies from `requirements.txt` (it does not read
+`pyproject.toml`). When live prices are unavailable (e.g. Yahoo throttling the
+shared cloud IP), the demo falls back to `data/demo_snapshot.json` and labels the
+prices as sample data, so the dashboard always renders.
 
 For public launch and revenue notes, see [docs/PUBLIC_LAUNCH.md](docs/PUBLIC_LAUNCH.md).
 

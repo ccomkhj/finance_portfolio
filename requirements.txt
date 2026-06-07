@@ -1,8 +1,11 @@
-# Runtime dependencies for Streamlit Community Cloud.
+# Pinned runtime dependencies for the public Streamlit Community Cloud demo.
 # Streamlit Cloud installs from this file (it does not read pyproject.toml's
-# PEP 621 deps). Keep in sync with [project.dependencies] in pyproject.toml.
-pandas>=2.2
-yfinance>=0.2.40
-streamlit>=1.35
-plotly>=5.22
-pyyaml>=6.0
+# PEP 621 deps) and auto-redeploys on every push, reinstalling the latest of any
+# unpinned dep — so these are pinned to known-good versions for deploy stability.
+# pyproject.toml keeps the loose lower bounds as the library contract; bump these
+# deliberately. Python version is selected in the Streamlit Cloud deploy UI (3.12+).
+pandas==3.0.2
+yfinance==1.3.0
+streamlit==1.56.0
+plotly==6.7.0
+pyyaml==6.0.3

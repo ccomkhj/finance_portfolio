@@ -25,3 +25,6 @@ docs/superpowers/
 
 # skill-creator eval scratch workspaces
 .claude/skills/*-workspace/
+
+# pair-consult session state
+.consult/

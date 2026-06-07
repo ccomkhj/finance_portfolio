@@ -389,3 +389,109 @@ def test_fetch_dividend_yields_handles_ticker_error(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(prices.yf, "Ticker", boom)
     out = prices.fetch_dividend_yields(["DEAD.DE"], now=date(2026, 1, 1))
     assert out["DEAD.DE"] != out["DEAD.DE"]
+
+
+# --- _save_cache failure must not lose already-fetched prices ----------------
+
+def test_fetch_prices_returns_prices_even_if_cache_write_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """A successful fetch followed by a failed cache write still returns prices."""
+    cache_path = tmp_path / "cache.json"
+
+    monkeypatch.setattr(prices, "_fetch_prices_yf", lambda tickers: {t: 50.0 for t in tickers})
+
+    def boom(_path: Path, _cache: dict) -> None:
+        raise OSError("read-only filesystem")
+
+    monkeypatch.setattr(prices, "_save_cache", boom)
+    now = datetime(2026, 4, 29, 10, 0, 0, tzinfo=timezone.utc)
+
+    result = prices.fetch_prices(["VWCE.DE"], cache_path=cache_path, now=now)
+    assert result == {"VWCE.DE": 50.0}
+    assert "cache" in capsys.readouterr().err.lower()
+
+
+# --- committed demo snapshot fallback (price-only) ---------------------------
+
+def test_load_price_snapshot_missing_file_returns_empty(tmp_path: Path) -> None:
+    assert prices.load_price_snapshot(tmp_path / "nope.json") == {}
+
+
+def test_load_price_snapshot_corrupt_returns_empty(tmp_path: Path) -> None:
+    p = tmp_path / "snap.json"
+    p.write_text("{not json")
+    assert prices.load_price_snapshot(p) == {}
+
+
+def test_load_price_snapshot_reads_prices(tmp_path: Path) -> None:
+    p = tmp_path / "snap.json"
+    p.write_text('{"VWCE.DE": 162.36, "EUNA.DE": 4.91}')
+    assert prices.load_price_snapshot(p) == {"VWCE.DE": 162.36, "EUNA.DE": 4.91}
+
+
+def test_resolve_prices_local_passes_through_and_propagates(tmp_path: Path) -> None:
+    """Not read-only: live result passes through unchanged, exceptions propagate."""
+    snap = tmp_path / "snap.json"
+    snap.write_text('{"VWCE.DE": 999.0}')
+
+    ok, source = prices.resolve_prices(
+        ["VWCE.DE"], fetch=lambda t: {"VWCE.DE": 100.0}, read_only=False, snapshot_path=snap
+    )
+    assert ok == {"VWCE.DE": 100.0}
+    assert source == "live"
+
+    def boom(_t: list[str]) -> dict[str, float]:
+        raise RuntimeError("yfinance down")
+
+    with pytest.raises(RuntimeError):
+        prices.resolve_prices(["VWCE.DE"], fetch=boom, read_only=False, snapshot_path=snap)
+
+
+def test_resolve_prices_readonly_live_data_marks_live(tmp_path: Path) -> None:
+    snap = tmp_path / "snap.json"
+    snap.write_text('{"VWCE.DE": 999.0}')
+    out, source = prices.resolve_prices(
+        ["VWCE.DE"], fetch=lambda t: {"VWCE.DE": 162.0}, read_only=True, snapshot_path=snap
+    )
+    assert out == {"VWCE.DE": 162.0}
+    assert source == "live"
+
+
+def test_resolve_prices_readonly_falls_back_to_snapshot_on_exception(tmp_path: Path) -> None:
+    snap = tmp_path / "snap.json"
+    snap.write_text('{"VWCE.DE": 162.36, "EUNA.DE": 4.91}')
+
+    def boom(_t: list[str]) -> dict[str, float]:
+        raise RuntimeError("yfinance down")
+
+    out, source = prices.resolve_prices(
+        ["VWCE.DE", "EUNA.DE"], fetch=boom, read_only=True, snapshot_path=snap
+    )
+    assert out == {"VWCE.DE": 162.36, "EUNA.DE": 4.91}
+    assert source == "snapshot"
+
+
+def test_resolve_prices_readonly_fills_nan_from_snapshot(tmp_path: Path) -> None:
+    """Live returns a usable price for one ticker and NaN for another; the NaN is
+    filled from the snapshot and the source is flagged as snapshot."""
+    snap = tmp_path / "snap.json"
+    snap.write_text('{"EUNA.DE": 4.91}')
+    live = {"VWCE.DE": 162.0, "EUNA.DE": float("nan")}
+
+    out, source = prices.resolve_prices(
+        ["VWCE.DE", "EUNA.DE"], fetch=lambda t: live, read_only=True, snapshot_path=snap
+    )
+    assert out == {"VWCE.DE": 162.0, "EUNA.DE": 4.91}
+    assert source == "snapshot"
+
+
+def test_resolve_prices_readonly_no_snapshot_returns_empty_live(tmp_path: Path) -> None:
+    def boom(_t: list[str]) -> dict[str, float]:
+        raise RuntimeError("yfinance down")
+
+    out, source = prices.resolve_prices(
+        ["VWCE.DE"], fetch=boom, read_only=True, snapshot_path=tmp_path / "nope.json"
+    )
+    assert out == {}
+    assert source == "live"

@@ -14,7 +14,8 @@ categories:
       - IWDA.AS
       - IUSA.AS
       - VUSA.AS
-  # High-conviction single names only; no holding above ~2% of the portfolio.
+  # Dry target — 5% reserved for high-conviction single names, no holding above
+  # ~2% of the portfolio. The demo intentionally holds none yet.
   individual-stocks:
     target_weight: 0.05
     tickers: []
@@ -23,10 +24,11 @@ categories:
     target_weight: 0.35
     tickers:
       - EUNA.DE
-  # Crisis and currency hedge. Suggested EUR listing: 4GLD.DE (Xetra-Gold).
+  # Crisis and currency hedge.
   gold:
     target_weight: 0.10
-    tickers: []
+    tickers:
+      - 4GLD.DE
   # Dry powder for drawdowns + emergency reserve. Held as cash_balance_eur.
   cash:
     target_weight: 0.20
@@ -42,9 +44,12 @@ income:
     proxy: IWRD.AS
   EUNA.DE:
     yield_pct: 2.4
+  4GLD.DE:
+    yield_pct: 0.0
 
 tax:
   rate_pct: 26.375
   default_teilfreistellung: equity
   teilfreistellung:
     EUNA.DE: none
+    4GLD.DE: none

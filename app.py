@@ -32,6 +32,7 @@ from portfolio.prices import (
     fetch_historical_fx_eur,
     fetch_names,
     fetch_prices,
+    resolve_prices,
 )
 from portfolio.rebalance import compute_rebalance
 from portfolio.transactions import load_transactions
@@ -47,6 +48,13 @@ READ_ONLY_ENV = "PORTFOLIO_READ_ONLY"
 
 def is_read_only_mode() -> bool:
     return os.environ.get(READ_ONLY_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def demo_price_note(source: str) -> str:
+    """One-line price-status note for the read-only demo banner."""
+    if source == "snapshot":
+        return "⚠️ Showing **sample** prices — live data is temporarily unavailable."
+    return "Prices are **live** via Yahoo Finance (yfinance)."
 
 
 def resolve_buy_ticker(selection: str, new_text: str, sentinel: str) -> tuple[str, bool]:
@@ -101,6 +109,10 @@ def main() -> None:
         "Drift threshold (%)", min_value=0.0, max_value=5.0, value=1.0, step=0.1
     )
 
+    read_only = is_read_only_mode()
+    if read_only:
+        _render_demo_banner()
+
     config = load_config(CONFIG_PATH)
     tx_df = load_transactions(TX_PATH)
     orphans = sorted(set(tx_df["ticker"]) - config.all_tickers())
@@ -114,9 +126,17 @@ def main() -> None:
     currencies = tuple(sorted({p.currency for p in positions} | {"EUR"}))
 
     with st.spinner("Fetching prices..."):
-        prices = _cached_prices(tickers)
+        # Keep the cached fetcher exception-truthful; resolve_prices adds the
+        # read-only demo's offline snapshot fallback only at this boundary.
+        prices, price_source = resolve_prices(
+            list(tickers),
+            fetch=lambda t: _cached_prices(tuple(t)),
+            read_only=read_only,
+        )
         fx = _cached_fx(currencies)
         names = _cached_names(tickers)
+    if read_only:
+        st.caption(demo_price_note(price_source))
 
     valued = value_positions(positions, prices, fx)
     missing = [p.ticker for p in positions if p.ticker not in {v.position.ticker for v in valued}]
@@ -129,7 +149,6 @@ def main() -> None:
         config.cash_balance_eur, config.cash_interest_pct,
     )
 
-    read_only = is_read_only_mode()
     if read_only:
         st.sidebar.caption("Read-only demo")
     tabs = st.tabs(["Overview"] if read_only else ["Overview", "Edit"])
@@ -147,6 +166,18 @@ def main() -> None:
             _render_edit_forms(config, positions)
 
     st.sidebar.caption(f"Last refresh: {datetime.now():%H:%M:%S}")
+
+
+def _render_demo_banner() -> None:
+    st.info(
+        "**Synthetic demo · read-only.** Sample portfolio data, not real holdings. "
+        "Prices are fetched live and fall back to a stored sample if unavailable. "
+        "Not financial advice — see the "
+        "[disclaimer](https://github.com/ccomkhj/finance_portfolio/blob/main/DISCLAIMER.md). "
+        "Run it locally with your own data: "
+        "[ccomkhj/finance_portfolio](https://github.com/ccomkhj/finance_portfolio).",
+        icon="ℹ️",
+    )
 
 
 def _render_summary(valued, cash_eur: float) -> None:

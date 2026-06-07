@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import tempfile
+from collections.abc import Callable
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import TypedDict, cast
@@ -12,6 +13,10 @@ import yfinance as yf
 
 PRICE_CACHE_PATH = Path("data/.price_cache.json")
 PRICE_CACHE_TTL_SECONDS = 600
+
+# Committed, price-only offline fallback for the public read-only demo, so the
+# dashboard renders even when Yahoo throttles Streamlit Cloud's shared IPs.
+SNAPSHOT_PATH = Path("data/demo_snapshot.json")
 
 
 class CacheEntry(TypedDict):
@@ -88,10 +93,57 @@ def fetch_prices(
     iso_now = now.isoformat().replace("+00:00", "Z")
     for t, p in new_prices.items():
         cache[t] = {"price": p, "fetched_at": iso_now}
-    _save_cache(cache_path, cache)
+    # Persisting the cache is best-effort: a write failure (e.g. a read-only or
+    # full filesystem on a hosted demo) must not discard prices we just fetched.
+    try:
+        _save_cache(cache_path, cache)
+    except OSError as e:
+        print(f"warning: could not persist price cache ({e})", file=sys.stderr)
 
     fresh.update(new_prices)
     return fresh
+
+
+def load_price_snapshot(path: Path = SNAPSHOT_PATH) -> dict[str, float]:
+    """Read the committed price-only demo snapshot. Missing or corrupt → {}."""
+    try:
+        return {str(k): float(v) for k, v in json.loads(path.read_text()).items()}
+    except (FileNotFoundError, json.JSONDecodeError, TypeError, ValueError):
+        return {}
+
+
+def resolve_prices(
+    tickers: list[str],
+    *,
+    fetch: Callable[[list[str]], dict[str, float]],
+    read_only: bool,
+    snapshot_path: Path = SNAPSHOT_PATH,
+) -> tuple[dict[str, float], str]:
+    """Live prices with an offline snapshot fallback for the public demo.
+
+    Returns ``(prices, source)``. ``source`` is ``"live"`` when every value came
+    from the live fetch, ``"snapshot"`` when any value was filled from the
+    committed demo snapshot. The snapshot is consulted only when ``read_only`` is
+    True, so local use keeps the injected fetcher exception-truthful (errors
+    propagate) rather than silently degrading to stale sample data.
+    """
+    if not read_only:
+        return fetch(tickers), "live"
+    try:
+        live = fetch(tickers)
+    except Exception:  # noqa: BLE001 — demo must render regardless of fetch failure
+        live = {}
+    snap = load_price_snapshot(snapshot_path)
+    merged: dict[str, float] = {}
+    used_snapshot = False
+    for t in tickers:
+        v = live.get(t)
+        if v is not None and v == v:  # not None, not NaN
+            merged[t] = v
+        elif t in snap:
+            merged[t] = snap[t]
+            used_snapshot = True
+    return merged, ("snapshot" if used_snapshot else "live")
 
 
 def _is_fresh(entry: CacheEntry, now: datetime) -> bool:

@@ -122,3 +122,18 @@ def test_app_read_only_mode_hides_edit_tab(monkeypatch):
     tab_labels = [t.label for t in at.tabs]
     assert tab_labels == ["Overview"]
     assert not any(s.label == "Ticker" for s in at.selectbox)
+
+
+# --- read-only demo price-status note ----------------------------------------
+
+def test_demo_price_note_flags_sample_data_when_snapshot():
+    from app import demo_price_note
+
+    note = demo_price_note("snapshot")
+    assert "sample" in note.lower()
+
+
+def test_demo_price_note_says_live_when_live():
+    from app import demo_price_note
+
+    assert "live" in demo_price_note("live").lower()
