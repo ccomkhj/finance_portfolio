@@ -128,8 +128,6 @@ def main() -> None:
         _render_demo_banner()
 
     config = load_config(CONFIG_PATH)
-    if not read_only:
-        _render_import_sidebar(config)
     tx_df = load_transactions(TX_PATH)
     orphans = sorted(set(tx_df["ticker"]) - config.all_tickers())
     if orphans:
@@ -446,34 +444,48 @@ def suggest_decimal(sample: str) -> str:
     return "comma" if ("," in s and s.rfind(",") > s.rfind(".")) else "dot"
 
 
-def _render_import_sidebar(config) -> None:
-    st.sidebar.divider()
-    st.sidebar.subheader("Import broker CSV")
+def _import_stepper(active: int) -> None:
+    """Three-step breadcrumb for the import flow, with the active step bolded."""
+    steps = ["Map columns", "Map ISINs", "Review & import"]
+    parts = [
+        f"**{i}. {label}**" if i == active else f"{i}. {label}"
+        for i, label in enumerate(steps, start=1)
+    ]
+    st.markdown(" → ".join(parts))
 
-    uploaded = st.sidebar.file_uploader(
-        "Trade Republic / broker CSV", type=["csv"], key="import_csv",
+
+def _render_import_section(config) -> None:
+    st.subheader("Import broker CSV")
+
+    uploaded = st.file_uploader(
+        "Trade Republic / broker CSV export", type=["csv"], key="import_csv",
     )
     if uploaded is None:
-        st.sidebar.caption("Drag a broker CSV here — you'll map the columns on first use.")
+        st.caption(
+            "Columns are mapped once on first use and remembered. Imports are "
+            "de-duplicated and checked against your holdings before anything is saved."
+        )
         return
 
     try:
         raw = pd.read_csv(uploaded, dtype=str, keep_default_na=False)
     except Exception as e:  # noqa: BLE001 — surface any parse failure to the user
-        st.sidebar.error(f"Cannot read CSV: {e}")
+        st.error(f"Cannot read CSV: {e}")
         return
     records = [{str(k): str(v) for k, v in row.items()} for row in raw.to_dict("records")]
     headers = [str(c) for c in raw.columns]
     if not records:
-        st.sidebar.warning("CSV has no data rows.")
+        st.warning("CSV has no data rows.")
         return
 
     profile_dict = read_import_profile(CONFIG_PATH)
     remap = (
-        st.sidebar.checkbox("Re-configure column mapping", key="import_remap")
+        st.toggle("Re-map columns", key="import_remap",
+                  help="Reconfigure how this CSV's columns are read.")
         if profile_dict is not None else False
     )
     if profile_dict is None or remap:
+        _import_stepper(1)
         _render_profile_form(headers, records)
         return
     profile = ImportProfile.from_dict(profile_dict)
@@ -492,23 +504,31 @@ def _render_import_sidebar(config) -> None:
     )
 
     if errors:
-        st.sidebar.error(f"{len(errors)} row(s) failed to parse.")
-        with st.sidebar.expander("Parse errors"):
-            for err in errors:
-                st.write(err)
-        st.sidebar.caption("Fix the file, or tick **Re-configure column mapping** above.")
+        _import_stepper(1)
+        st.error(
+            f"{len(errors)} row(s) failed to parse — fix the file, or toggle "
+            "**Re-map columns** above."
+        )
+        st.dataframe(
+            pd.DataFrame({"problem": errors}), use_container_width=True, hide_index=True,
+        )
         return
     if unknown:
-        st.sidebar.warning(f"{len(unknown)} unmapped ISIN(s) — map them below to continue.")
+        _import_stepper(2)
+        st.warning(f"{len(unknown)} ISIN(s) aren't mapped to a ticker yet.")
         _render_isin_form(unknown, config)
         return
 
-    st.sidebar.caption(f"{len(new_rows)} new · {len(duplicates)} duplicate(s) skipped")
+    _import_stepper(3)
     if not new_rows:
-        st.sidebar.info("Nothing new to import.")
+        st.success(
+            f"Already up to date — {len(duplicates)} row(s) match existing "
+            "transactions, nothing new to import."
+        )
         return
 
-    st.sidebar.dataframe(
+    st.caption(f"**{len(new_rows)}** new · {len(duplicates)} duplicate(s) will be skipped.")
+    st.dataframe(
         pd.DataFrame([
             {"date": r.date.isoformat(), "ticker": r.ticker, "action": r.action,
              "qty": r.quantity, "price": r.price, "ccy": r.currency}
@@ -516,7 +536,9 @@ def _render_import_sidebar(config) -> None:
         ]),
         use_container_width=True, hide_index=True,
     )
-    if not st.sidebar.button(f"Import {len(new_rows)} transaction(s)", key="import_submit"):
+    if not st.button(
+        f"Import {len(new_rows)} transaction(s)", key="import_submit", type="primary",
+    ):
         return
 
     # Same pre-flight guard as the CLI: never append a sell that oversells.
@@ -524,7 +546,7 @@ def _render_import_sidebar(config) -> None:
 
     msg = _check_no_negative_holdings(tx_df, new_rows)
     if msg:
-        st.sidebar.error(msg)
+        st.error(msg)
         return
     txs = [
         Transaction(date=r.date, ticker=r.ticker, action=r.action,
@@ -532,46 +554,58 @@ def _render_import_sidebar(config) -> None:
         for r in sorted(new_rows, key=lambda r: r.date)
     ]
     append_transactions(TX_PATH, txs)
+    # Reset the uploader so a successful import lands on a clean slate, not a
+    # confusing "nothing new" view of the same file.
+    st.session_state.pop("import_csv", None)
     _after_write()
 
 
 def _render_profile_form(headers: list[str], records: list[dict]) -> None:
     """Live (non-form) column-mapping UI. The action-column selectbox reruns so
     its distinct values can be classified. Saves the profile to config."""
-    st.sidebar.caption("Map your CSV columns — saved to config for next time.")
+    st.caption("Map your CSV columns — we've guessed where we can. Adjust if needed.")
 
+    grid = st.columns(3) + st.columns(3)
     columns: dict[str, str] = {}
-    for field in IMPORT_FIELDS:
+    for slot, field in zip(grid, IMPORT_FIELDS):
         guess = guess_column(field, headers)
         idx = headers.index(guess) if guess in headers else 0
-        columns[field] = st.sidebar.selectbox(field, headers, index=idx, key=f"map_{field}")
+        columns[field] = slot.selectbox(field, headers, index=idx, key=f"map_{field}")
 
     cur_guess = guess_column("currency", headers)
     cur_options = [NO_CURRENCY, *headers]
     cur_idx = cur_options.index(cur_guess) if cur_guess in headers else 0
-    currency = st.sidebar.selectbox("currency", cur_options, index=cur_idx, key="map_currency")
+    currency = grid[len(IMPORT_FIELDS)].selectbox(
+        "currency", cur_options, index=cur_idx, key="map_currency",
+    )
 
     sample = str(records[0].get(columns["price"], "")) if records else ""
     dec_opts = ["dot", "comma"]
-    decimal = st.sidebar.radio(
+    c1, c2 = st.columns(2)
+    decimal = c1.radio(
         "Decimal style", dec_opts,
         index=dec_opts.index(suggest_decimal(sample)),
         format_func=lambda d: "1,234.56 (dot)" if d == "dot" else "1.234,56 (comma)",
         key="map_decimal",
     )
-    date_format = st.sidebar.text_input("Date format", value="auto", key="map_datefmt")
+    date_format = c2.text_input(
+        "Date format", value="auto", key="map_datefmt",
+        help="strptime pattern (e.g. %d.%m.%Y), or 'auto' to detect common formats.",
+    )
 
     values = distinct_actions(records, columns["action"])
     actions: dict[str, str] = {}
     if values:
-        st.sidebar.caption("Classify each action value:")
-        for v in values:
-            choice = st.sidebar.selectbox(f"{v!r} →", ["buy", "sell"], key=f"map_act_{v}")
-            actions[v.lower()] = choice
+        st.caption("Classify each value found in the action column:")
+        act_cols = st.columns(min(len(values), 4))
+        for i, v in enumerate(values):
+            actions[v.lower()] = act_cols[i % len(act_cols)].selectbox(
+                f"{v!r} →", ["buy", "sell"], key=f"map_act_{v}",
+            )
     else:
-        st.sidebar.warning("No action values found in that column.")
+        st.warning("No values found in that column — pick a different action column.")
 
-    if not st.sidebar.button("Save mapping", key="map_save", disabled=not values):
+    if not st.button("Save mapping", key="map_save", type="primary", disabled=not values):
         return
     if currency != NO_CURRENCY:
         columns["currency"] = currency
@@ -588,29 +622,29 @@ def _render_profile_form(headers: list[str], records: list[dict]) -> None:
 
 def _render_isin_form(unknown: list[str], config) -> None:
     """Map each unknown ISIN to a yfinance ticker + category, then save."""
+    st.caption("Assign each ISIN a yfinance ticker (EUR listing, e.g. IWDA.AS) and a category.")
     categories = sorted(config.categories.keys())
     entries: dict[str, tuple[str, str]] = {}
     for isin in unknown:
-        ticker = st.sidebar.text_input(
-            f"{isin} → ticker", key=f"isin_t_{isin}", placeholder="e.g. IWDA.AS",
-        )
-        category = st.sidebar.selectbox(
-            "category", categories, key=f"isin_c_{isin}",
+        c1, c2 = st.columns([2, 1])
+        ticker = c1.text_input(isin, key=f"isin_t_{isin}", placeholder="ticker, e.g. IWDA.AS")
+        category = c2.selectbox(
+            "category", categories, key=f"isin_c_{isin}", label_visibility="collapsed",
         )
         entries[isin] = (ticker.strip(), category)
 
-    if not st.sidebar.button("Save ISIN mapping", key="isin_save"):
+    if not st.button("Save ISIN mapping", key="isin_save", type="primary"):
         return
     missing = [isin for isin, (t, _) in entries.items() if not t]
     if missing:
-        st.sidebar.error(f"Ticker required for: {', '.join(missing)}")
+        st.error(f"Ticker required for: {', '.join(missing)}")
         return
     for isin, (ticker, category) in entries.items():
         try:
             add_category_ticker(CONFIG_PATH, category, ticker)
         except ValidationError as e:
             if "already in category" not in str(e):
-                st.sidebar.error(str(e))
+                st.error(str(e))
                 return
         set_isin_map_entry(CONFIG_PATH, isin, ticker)
     st.toast("ISIN mapping saved", icon="✅")
@@ -744,6 +778,8 @@ def _render_pnl_and_rebalance(valued, config, drift_threshold_pct: float, names:
 
 
 def _render_edit_forms(config, positions) -> None:
+    _render_import_section(config)
+    st.divider()
     st.subheader("Trades")
     c1, c2 = st.columns(2)
     with c1:

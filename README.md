@@ -109,11 +109,11 @@ numbers will change.
    The first import is interactive: it asks how to map your CSV columns,
    decimal/date style, and each ISIN → yfinance ticker, then saves that
    profile to `config.yaml`. You can do the same entirely in the dashboard:
-   drag a CSV into the **Import broker CSV** uploader in the left sidebar and
-   it walks you through column mapping and any unknown ISINs the first time,
-   then reuses that saved profile on later uploads — with the same parsing,
-   de-duplication, and oversell checks, a preview of the new rows, and append
-   on confirmation.
+   the **Edit** tab has an **Import broker CSV** section that walks you through
+   column mapping and any unknown ISINs the first time (a three-step flow:
+   map columns → map ISINs → review & import), then reuses that saved profile
+   on later uploads — with the same parsing, de-duplication, and oversell
+   checks, a preview of the new rows, and append on confirmation.
 
 5. Validate and inspect:
 

@@ -240,6 +240,8 @@ def test_app_renders_with_edit_tab(monkeypatch):
 
     subheaders = [s.value for s in at.subheader]
     assert any("Income estimate" in s for s in subheaders)
+    # the CSV importer lives in the Edit tab (main area), not the sidebar
+    assert any("Import broker CSV" in s for s in subheaders)
 
     ticker_box = next(s for s in at.selectbox if s.label == "Ticker")
     assert app_module.SENTINEL in ticker_box.options
