@@ -7,9 +7,11 @@ from app import (
     build_income_rows,
     build_status_markdown,
     is_read_only_mode,
+    prepare_import,
     resolve_buy_ticker,
 )
 from portfolio.config import Category, Config
+from portfolio.importer import ImportProfile, dedupe_key
 from portfolio.income import HoldingIncome, IncomeReport, TaxConfig, compute_net
 from portfolio.mutations import ValidationError
 from portfolio.positions import Position
@@ -119,6 +121,53 @@ def test_build_status_markdown_flags_unresolved_income():
     md = build_status_markdown(valued, config, income, names, 1.0)
     assert "EUNA.DE" in md
     assert "No yield" in md
+
+
+def _import_profile():
+    return ImportProfile.from_dict({
+        "columns": {"date": "date", "isin": "isin", "action": "side",
+                    "quantity": "qty", "price": "price", "currency": "ccy"},
+        "decimal": "dot",
+        "date_format": "auto",
+        "actions": {"buy": "buy", "sell": "sell"},
+    })
+
+
+def _import_records():
+    return [{
+        "date": "2024-01-02", "isin": "IE00B4L5Y983", "side": "buy",
+        "qty": "10", "price": "98.50", "ccy": "EUR",
+    }]
+
+
+def test_prepare_import_resolves_and_marks_new():
+    profile = _import_profile()
+    isin_map = {"IE00B4L5Y983": "IWDA.AS"}
+    new_rows, duplicates, unknown, errors = prepare_import(
+        _import_records(), profile, isin_map, set(),
+    )
+    assert errors == [] and unknown == [] and duplicates == []
+    assert len(new_rows) == 1
+    assert new_rows[0].ticker == "IWDA.AS"
+
+
+def test_prepare_import_flags_unmapped_isin():
+    new_rows, duplicates, unknown, errors = prepare_import(
+        _import_records(), _import_profile(), {}, set(),
+    )
+    assert unknown == ["IE00B4L5Y983"]
+    assert new_rows == []
+
+
+def test_prepare_import_skips_duplicate_against_existing():
+    from datetime import date
+
+    existing = {dedupe_key(date(2024, 1, 2), "IWDA.AS", "buy", 10.0, 98.50)}
+    new_rows, duplicates, unknown, errors = prepare_import(
+        _import_records(), _import_profile(), {"IE00B4L5Y983": "IWDA.AS"}, existing,
+    )
+    assert new_rows == []
+    assert len(duplicates) == 1
 
 
 @pytest.mark.parametrize("raw", ["1", "true", "TRUE", "yes", "on"])

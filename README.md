@@ -100,11 +100,18 @@ numbers will change.
    uv run portfolio add-sell VWCE.DE 2 120.00
    ```
 
-4. Or import a broker CSV:
+4. Or import a broker CSV (e.g. a Trade Republic export):
 
    ```bash
    uv run portfolio import path/to/trades.csv
    ```
+
+   The first import is interactive: it asks how to map your CSV columns,
+   decimal/date style, and each ISIN → yfinance ticker, then saves that
+   profile to `config.yaml`. Once a profile exists, you can also drag a CSV
+   into the dashboard's **Import broker CSV** uploader in the left sidebar —
+   it reuses the same parsing, de-duplication, and oversell checks, previews
+   the new rows, and appends them on confirmation.
 
 5. Validate and inspect:
 

@@ -17,9 +17,18 @@ from portfolio.income import (
     compute_net,
     yield_tickers_needed,
 )
+from portfolio.importer import (
+    ImportProfile,
+    dedupe_key,
+    parse_rows,
+    resolve_tickers,
+    split_new,
+)
 from portfolio.mutations import (
     ValidationError,
     add_category_ticker,
+    read_import_profile,
+    read_isin_map,
     record_transaction,
     set_cash,
     set_category_tickers,
@@ -35,7 +44,7 @@ from portfolio.prices import (
     resolve_prices,
 )
 from portfolio.rebalance import compute_rebalance
-from portfolio.transactions import load_transactions
+from portfolio.transactions import Transaction, append_transactions, load_transactions
 from portfolio.valuation import value_positions
 
 DATA = Path("data")
@@ -117,6 +126,8 @@ def main() -> None:
         _render_demo_banner()
 
     config = load_config(CONFIG_PATH)
+    if not read_only:
+        _render_import_sidebar()
     tx_df = load_transactions(TX_PATH)
     orphans = sorted(set(tx_df["ticker"]) - config.all_tickers())
     if orphans:
@@ -387,6 +398,105 @@ def _render_export(status_md: str) -> None:
             mime="text/markdown",
             key="export_download",
         )
+
+
+def prepare_import(records, profile: ImportProfile, isin_map, existing_keys):
+    """Run the CLI import pipeline (pure): parse → resolve ISINs → dedupe.
+
+    Returns (new_rows, duplicates, unknown_isins, errors). Same building blocks
+    as `portfolio import`, so the dashboard and CLI behave identically."""
+    rows, errors = parse_rows(records, profile)
+    resolved, unknown = resolve_tickers(rows, isin_map)
+    new_rows, duplicates = split_new(resolved, existing_keys)
+    return new_rows, duplicates, unknown, errors
+
+
+def _render_import_sidebar() -> None:
+    st.sidebar.divider()
+    st.sidebar.subheader("Import broker CSV")
+
+    profile_dict = read_import_profile(CONFIG_PATH)
+    if profile_dict is None:
+        st.sidebar.caption(
+            "No import profile yet. Set up the column mapping once via the CLI — "
+            "`portfolio import <file.csv>` — then upload here."
+        )
+        return
+
+    uploaded = st.sidebar.file_uploader(
+        "Trade Republic / broker CSV", type=["csv"], key="import_csv",
+    )
+    if uploaded is None:
+        return
+
+    try:
+        raw = pd.read_csv(uploaded, dtype=str, keep_default_na=False)
+    except Exception as e:  # noqa: BLE001 — surface any parse failure to the user
+        st.sidebar.error(f"Cannot read CSV: {e}")
+        return
+    records = [{str(k): str(v) for k, v in row.items()} for row in raw.to_dict("records")]
+    if not records:
+        st.sidebar.warning("CSV has no data rows.")
+        return
+
+    profile = ImportProfile.from_dict(profile_dict)
+    isin_map = read_isin_map(CONFIG_PATH)
+    tx_df = load_transactions(TX_PATH)
+    existing_keys = {
+        dedupe_key(d.date(), t, a, float(q), float(p))
+        for d, t, a, q, p in zip(
+            tx_df["date"], tx_df["ticker"], tx_df["action"],
+            tx_df["quantity"], tx_df["price"],
+        )
+    }
+    new_rows, duplicates, unknown, errors = prepare_import(
+        records, profile, isin_map, existing_keys,
+    )
+
+    if errors:
+        st.sidebar.error(f"{len(errors)} row(s) failed to parse.")
+        with st.sidebar.expander("Parse errors"):
+            for err in errors:
+                st.write(err)
+        st.sidebar.caption("Fix the file, or re-run `portfolio import --remap` in the CLI.")
+        return
+    if unknown:
+        st.sidebar.warning(
+            f"{len(unknown)} unmapped ISIN(s): {', '.join(unknown)}. "
+            "Map them once via the CLI (`portfolio import <file>`), then re-upload."
+        )
+        return
+
+    st.sidebar.caption(f"{len(new_rows)} new · {len(duplicates)} duplicate(s) skipped")
+    if not new_rows:
+        st.sidebar.info("Nothing new to import.")
+        return
+
+    st.sidebar.dataframe(
+        pd.DataFrame([
+            {"date": r.date.isoformat(), "ticker": r.ticker, "action": r.action,
+             "qty": r.quantity, "price": r.price, "ccy": r.currency}
+            for r in sorted(new_rows, key=lambda r: r.date)
+        ]),
+        use_container_width=True, hide_index=True,
+    )
+    if not st.sidebar.button(f"Import {len(new_rows)} transaction(s)", key="import_submit"):
+        return
+
+    # Same pre-flight guard as the CLI: never append a sell that oversells.
+    from portfolio.cli import _check_no_negative_holdings
+
+    msg = _check_no_negative_holdings(tx_df, new_rows)
+    if msg:
+        st.sidebar.error(msg)
+        return
+    txs = [
+        Transaction(date=r.date, ticker=r.ticker, action=r.action,
+                    quantity=r.quantity, price=r.price, currency=r.currency)
+        for r in sorted(new_rows, key=lambda r: r.date)
+    ]
+    append_transactions(TX_PATH, txs)
+    _after_write()
 
 
 def _render_income(report: IncomeReport, names: dict[str, str], tax: TaxConfig) -> None:
