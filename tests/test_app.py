@@ -2,9 +2,18 @@ from __future__ import annotations
 
 import pytest
 
-from app import SENTINEL, build_income_rows, is_read_only_mode, resolve_buy_ticker
+from app import (
+    SENTINEL,
+    build_income_rows,
+    build_status_markdown,
+    is_read_only_mode,
+    resolve_buy_ticker,
+)
+from portfolio.config import Category, Config
 from portfolio.income import HoldingIncome, IncomeReport, TaxConfig, compute_net
 from portfolio.mutations import ValidationError
+from portfolio.positions import Position
+from portfolio.valuation import ValuedPosition
 
 
 def test_build_income_rows_includes_holdings_cash_and_flags_unresolved():
@@ -54,6 +63,62 @@ def test_resolve_sentinel_with_text_is_new_and_stripped():
 def test_resolve_sentinel_without_text_raises():
     with pytest.raises(ValidationError):
         resolve_buy_ticker(SENTINEL, "   ", SENTINEL)
+
+
+def _sample_status_args():
+    pos = Position(ticker="VWCE.DE", quantity=10.0, avg_cost_eur=98.50, currency="EUR")
+    valued = [ValuedPosition(
+        position=pos, current_price=162.36, market_value_eur=1623.60,
+        pnl_eur=638.60, pnl_pct=0.6483,
+    )]
+    config = Config(
+        base_currency="EUR",
+        categories={
+            "global-equity": Category("global-equity", 0.80, ("VWCE.DE",)),
+            "cash": Category("cash", 0.20, ()),
+        },
+        cash_balance_eur=1250.0,
+        cash_interest_pct=2.0,
+    )
+    income = IncomeReport(
+        holdings=[HoldingIncome("VWCE.DE", 1623.60, 2.0, 32.47, 0.0, True, "proxy:VWRL.AS")],
+        cash_balance_eur=1250.0, cash_interest_pct=2.0, cash_annual_eur=25.0,
+    )
+    names = {"VWCE.DE": "Vanguard FTSE All-World"}
+    return valued, config, income, names
+
+
+def test_build_status_markdown_includes_core_sections_and_holding():
+    valued, config, income, names = _sample_status_args()
+    md = build_status_markdown(valued, config, income, names, 1.0, tax=config.tax)
+
+    assert md.startswith("# Portfolio status")
+    for section in ("## Summary", "## Holdings", "## Allocation vs target",
+                    "## Income estimate"):
+        assert section in md
+    # holding row carries the resolved name and value
+    assert "Vanguard FTSE All-World" in md
+    assert "VWCE.DE" in md
+    # cash and total are reflected in the summary
+    assert "€2,873.60" in md  # 1623.60 invested + 1250.00 cash
+
+
+def test_build_status_markdown_flags_snapshot_prices():
+    valued, config, income, names = _sample_status_args()
+    md = build_status_markdown(
+        valued, config, income, names, 1.0, price_source="snapshot",
+    )
+    assert "sample" in md.lower()
+
+
+def test_build_status_markdown_flags_unresolved_income():
+    valued, config, income, names = _sample_status_args()
+    income.holdings.append(
+        HoldingIncome("EUNA.DE", 100.0, None, 0.0, 0.0, False, "unresolved")
+    )
+    md = build_status_markdown(valued, config, income, names, 1.0)
+    assert "EUNA.DE" in md
+    assert "No yield" in md
 
 
 @pytest.mark.parametrize("raw", ["1", "true", "TRUE", "yes", "on"])
