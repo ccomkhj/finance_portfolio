@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -41,6 +42,11 @@ CONFIG_PATH = DATA / "config.yaml"
 TX_PATH = DATA / "transactions.csv"
 
 SENTINEL = "➕ New ticker…"
+READ_ONLY_ENV = "PORTFOLIO_READ_ONLY"
+
+
+def is_read_only_mode() -> bool:
+    return os.environ.get(READ_ONLY_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def resolve_buy_ticker(selection: str, new_text: str, sentinel: str) -> tuple[str, bool]:
@@ -123,7 +129,11 @@ def main() -> None:
         config.cash_balance_eur, config.cash_interest_pct,
     )
 
-    overview, edit = st.tabs(["Overview", "Edit"])
+    read_only = is_read_only_mode()
+    if read_only:
+        st.sidebar.caption("Read-only demo")
+    tabs = st.tabs(["Overview"] if read_only else ["Overview", "Edit"])
+    overview = tabs[0]
     with overview:
         _render_summary(valued, config.cash_balance_eur)
         st.divider()
@@ -132,8 +142,9 @@ def main() -> None:
         _render_allocation(valued, config, names)
         st.divider()
         _render_pnl_and_rebalance(valued, config, drift_threshold, names)
-    with edit:
-        _render_edit_forms(config, positions)
+    if not read_only:
+        with tabs[1]:
+            _render_edit_forms(config, positions)
 
     st.sidebar.caption(f"Last refresh: {datetime.now():%H:%M:%S}")
 

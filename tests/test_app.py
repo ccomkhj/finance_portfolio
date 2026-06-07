@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from app import SENTINEL, build_income_rows, resolve_buy_ticker
+from app import SENTINEL, build_income_rows, is_read_only_mode, resolve_buy_ticker
 from portfolio.income import HoldingIncome, IncomeReport, TaxConfig, compute_net
 from portfolio.mutations import ValidationError
 
@@ -56,6 +56,18 @@ def test_resolve_sentinel_without_text_raises():
         resolve_buy_ticker(SENTINEL, "   ", SENTINEL)
 
 
+@pytest.mark.parametrize("raw", ["1", "true", "TRUE", "yes", "on"])
+def test_is_read_only_mode_accepts_common_true_values(monkeypatch, raw):
+    monkeypatch.setenv("PORTFOLIO_READ_ONLY", raw)
+    assert is_read_only_mode()
+
+
+@pytest.mark.parametrize("raw", ["", "0", "false", "off", "anything else"])
+def test_is_read_only_mode_defaults_false(monkeypatch, raw):
+    monkeypatch.setenv("PORTFOLIO_READ_ONLY", raw)
+    assert not is_read_only_mode()
+
+
 def test_app_renders_with_edit_tab(monkeypatch):
     """The app runs without exception, exposes an Edit tab, and the buy
     selectbox offers known tickers + the new-ticker sentinel."""
@@ -86,3 +98,27 @@ def test_app_renders_with_edit_tab(monkeypatch):
     ticker_box = next(s for s in at.selectbox if s.label == "Ticker")
     assert app_module.SENTINEL in ticker_box.options
     assert any(opt != app_module.SENTINEL for opt in ticker_box.options)
+
+
+def test_app_read_only_mode_hides_edit_tab(monkeypatch):
+    from streamlit.testing.v1 import AppTest
+
+    import app as app_module
+
+    monkeypatch.setenv("PORTFOLIO_READ_ONLY", "1")
+    app_module._cached_prices.clear()
+    app_module._cached_fx.clear()
+    app_module._cached_names.clear()
+    app_module._cached_yields.clear()
+    monkeypatch.setattr(app_module, "fetch_prices", lambda tickers: {t: 1.0 for t in tickers})
+    monkeypatch.setattr(app_module, "fetch_fx_eur", lambda currencies: {c: 1.0 for c in currencies})
+    monkeypatch.setattr(app_module, "fetch_names", lambda tickers: {t: t for t in tickers})
+    monkeypatch.setattr(app_module, "fetch_historical_fx_eur", lambda currency, d: 1.0)
+    monkeypatch.setattr(app_module, "fetch_dividend_yields", lambda tickers: {t: 0.02 for t in tickers})
+
+    at = AppTest.from_file("app.py").run(timeout=30)
+    assert not at.exception
+
+    tab_labels = [t.label for t in at.tabs]
+    assert tab_labels == ["Overview"]
+    assert not any(s.label == "Ticker" for s in at.selectbox)

@@ -12,6 +12,9 @@ __pycache__/
 /reports/*.html
 
 /data/.price_cache.json
+/data/*.bak
+/data/private/
+/broker_exports/
 docs/superpowers/
 
 # grill-with-docs artifacts

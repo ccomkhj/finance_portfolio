@@ -1,31 +1,39 @@
 base_currency: EUR
 
+# Synthetic demo portfolio. Replace this file with your own categories, tickers,
+# target weights, cash balance, and tax assumptions.
 categories:
-  core-etf:
-    target_weight: 0.50
+  global-equity:
+    target_weight: 0.70
     tickers:
-      - WEBG.DE
-      - SXR8.DE
-  single-stocks:
-    target_weight: 0.125
+      - VWCE.DE
+      - IWDA.AS
+  us-equity:
+    target_weight: 0.15
     tickers:
-      - VOW.DE
-      - SHL.DE
+      - IUSA.AS
+      - VUSA.AS
   bonds:
-    target_weight: 0.30
+    target_weight: 0.10
     tickers:
       - EUNA.DE
   cash:
-    target_weight: 0.075
+    target_weight: 0.05
     tickers: []
 
-cash_balance_eur: 11202.25
-cash_interest_pct: 2.0              # annual interest your bank pays on cash (bank-specific)
+cash_balance_eur: 1250.00
+cash_interest_pct: 2.0
+
+income:
+  VWCE.DE:
+    proxy: VWRL.AS
+  IWDA.AS:
+    proxy: IWRD.AS
+  EUNA.DE:
+    yield_pct: 2.4
 
 tax:
-  rate_pct: 26.375                  # Kapitalertragsteuer 25% + Soli; no church tax
-  default_teilfreistellung: equity  # equity ETFs (WEBG.DE, SXR8.DE) keep the 30% exemption
+  rate_pct: 26.375
+  default_teilfreistellung: equity
   teilfreistellung:
-    VOW.DE: none                    # individual stock — no exemption
-    SHL.DE: none                    # individual stock — no exemption
-    EUNA.DE: none                   # bond fund — no exemption
+    EUNA.DE: none
