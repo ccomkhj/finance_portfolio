@@ -6,10 +6,15 @@ from app import (
     SENTINEL,
     build_income_rows,
     build_status_markdown,
+    distinct_actions,
+    guess_column,
     is_read_only_mode,
+    prepare_import,
     resolve_buy_ticker,
+    suggest_decimal,
 )
 from portfolio.config import Category, Config
+from portfolio.importer import ImportProfile, dedupe_key
 from portfolio.income import HoldingIncome, IncomeReport, TaxConfig, compute_net
 from portfolio.mutations import ValidationError
 from portfolio.positions import Position
@@ -121,6 +126,82 @@ def test_build_status_markdown_flags_unresolved_income():
     assert "No yield" in md
 
 
+def _import_profile():
+    return ImportProfile.from_dict({
+        "columns": {"date": "date", "isin": "isin", "action": "side",
+                    "quantity": "qty", "price": "price", "currency": "ccy"},
+        "decimal": "dot",
+        "date_format": "auto",
+        "actions": {"buy": "buy", "sell": "sell"},
+    })
+
+
+def _import_records():
+    return [{
+        "date": "2024-01-02", "isin": "IE00B4L5Y983", "side": "buy",
+        "qty": "10", "price": "98.50", "ccy": "EUR",
+    }]
+
+
+def test_prepare_import_resolves_and_marks_new():
+    profile = _import_profile()
+    isin_map = {"IE00B4L5Y983": "IWDA.AS"}
+    new_rows, duplicates, unknown, errors = prepare_import(
+        _import_records(), profile, isin_map, set(),
+    )
+    assert errors == [] and unknown == [] and duplicates == []
+    assert len(new_rows) == 1
+    assert new_rows[0].ticker == "IWDA.AS"
+
+
+def test_prepare_import_flags_unmapped_isin():
+    new_rows, duplicates, unknown, errors = prepare_import(
+        _import_records(), _import_profile(), {}, set(),
+    )
+    assert unknown == ["IE00B4L5Y983"]
+    assert new_rows == []
+
+
+def test_prepare_import_skips_duplicate_against_existing():
+    from datetime import date
+
+    existing = {dedupe_key(date(2024, 1, 2), "IWDA.AS", "buy", 10.0, 98.50)}
+    new_rows, duplicates, unknown, errors = prepare_import(
+        _import_records(), _import_profile(), {"IE00B4L5Y983": "IWDA.AS"}, existing,
+    )
+    assert new_rows == []
+    assert len(duplicates) == 1
+
+
+def test_guess_column_matches_known_aliases():
+    headers = ["Datum", "ISIN", "Richtung", "Anzahl", "Kurs", "Währung"]
+    assert guess_column("date", headers) == "Datum"
+    assert guess_column("isin", headers) == "ISIN"
+    assert guess_column("action", headers) == "Richtung"
+    assert guess_column("quantity", headers) == "Anzahl"
+    assert guess_column("price", headers) == "Kurs"
+    assert guess_column("currency", headers) == "Währung"
+
+
+def test_guess_column_returns_none_when_no_alias():
+    assert guess_column("date", ["foo", "bar"]) is None
+
+
+def test_distinct_actions_dedupes_case_insensitively_in_order():
+    records = [{"side": "Buy"}, {"side": "SELL"}, {"side": "buy"}, {"side": ""}]
+    assert distinct_actions(records, "side") == ["Buy", "SELL"]
+
+
+@pytest.mark.parametrize("sample,expected", [
+    ("1.234,56", "comma"),
+    ("1,234.56", "dot"),
+    ("98.50", "dot"),
+    ("98,50", "comma"),
+])
+def test_suggest_decimal(sample, expected):
+    assert suggest_decimal(sample) == expected
+
+
 @pytest.mark.parametrize("raw", ["1", "true", "TRUE", "yes", "on"])
 def test_is_read_only_mode_accepts_common_true_values(monkeypatch, raw):
     monkeypatch.setenv("PORTFOLIO_READ_ONLY", raw)
@@ -159,6 +240,8 @@ def test_app_renders_with_edit_tab(monkeypatch):
 
     subheaders = [s.value for s in at.subheader]
     assert any("Income estimate" in s for s in subheaders)
+    # the CSV importer lives in the Edit tab (main area), not the sidebar
+    assert any("Import broker CSV" in s for s in subheaders)
 
     ticker_box = next(s for s in at.selectbox if s.label == "Ticker")
     assert app_module.SENTINEL in ticker_box.options
