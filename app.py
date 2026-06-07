@@ -32,6 +32,8 @@ from portfolio.mutations import (
     record_transaction,
     set_cash,
     set_category_tickers,
+    set_import_profile,
+    set_isin_map_entry,
     set_target_weights,
 )
 from portfolio.positions import compute_positions, enrich_transactions_with_eur
@@ -127,7 +129,7 @@ def main() -> None:
 
     config = load_config(CONFIG_PATH)
     if not read_only:
-        _render_import_sidebar()
+        _render_import_sidebar(config)
     tx_df = load_transactions(TX_PATH)
     orphans = sorted(set(tx_df["ticker"]) - config.all_tickers())
     if orphans:
@@ -411,22 +413,48 @@ def prepare_import(records, profile: ImportProfile, isin_map, existing_keys):
     return new_rows, duplicates, unknown, errors
 
 
-def _render_import_sidebar() -> None:
+IMPORT_FIELDS = ("date", "isin", "action", "quantity", "price")
+NO_CURRENCY = "(none → EUR)"
+
+
+def guess_column(field: str, headers: list[str]) -> str | None:
+    """Best-guess CSV header for an import field, reusing the CLI's aliases."""
+    from portfolio.cli import _FIELD_ALIASES
+
+    aliases = _FIELD_ALIASES.get(field, [])
+    for h in headers:
+        if h.strip().lower() in aliases:
+            return h
+    return None
+
+
+def distinct_actions(records: list[dict], action_col: str) -> list[str]:
+    """Distinct raw action values (first-seen order, case-insensitive dedupe)."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for rec in records:
+        v = str(rec.get(action_col, "")).strip()
+        if v and v.lower() not in seen:
+            seen.add(v.lower())
+            out.append(v)
+    return out
+
+
+def suggest_decimal(sample: str) -> str:
+    """Guess locale: 'comma' when ',' is the rightmost separator, else 'dot'."""
+    s = str(sample)
+    return "comma" if ("," in s and s.rfind(",") > s.rfind(".")) else "dot"
+
+
+def _render_import_sidebar(config) -> None:
     st.sidebar.divider()
     st.sidebar.subheader("Import broker CSV")
-
-    profile_dict = read_import_profile(CONFIG_PATH)
-    if profile_dict is None:
-        st.sidebar.caption(
-            "No import profile yet. Set up the column mapping once via the CLI — "
-            "`portfolio import <file.csv>` — then upload here."
-        )
-        return
 
     uploaded = st.sidebar.file_uploader(
         "Trade Republic / broker CSV", type=["csv"], key="import_csv",
     )
     if uploaded is None:
+        st.sidebar.caption("Drag a broker CSV here — you'll map the columns on first use.")
         return
 
     try:
@@ -435,11 +463,21 @@ def _render_import_sidebar() -> None:
         st.sidebar.error(f"Cannot read CSV: {e}")
         return
     records = [{str(k): str(v) for k, v in row.items()} for row in raw.to_dict("records")]
+    headers = [str(c) for c in raw.columns]
     if not records:
         st.sidebar.warning("CSV has no data rows.")
         return
 
+    profile_dict = read_import_profile(CONFIG_PATH)
+    remap = (
+        st.sidebar.checkbox("Re-configure column mapping", key="import_remap")
+        if profile_dict is not None else False
+    )
+    if profile_dict is None or remap:
+        _render_profile_form(headers, records)
+        return
     profile = ImportProfile.from_dict(profile_dict)
+
     isin_map = read_isin_map(CONFIG_PATH)
     tx_df = load_transactions(TX_PATH)
     existing_keys = {
@@ -458,13 +496,11 @@ def _render_import_sidebar() -> None:
         with st.sidebar.expander("Parse errors"):
             for err in errors:
                 st.write(err)
-        st.sidebar.caption("Fix the file, or re-run `portfolio import --remap` in the CLI.")
+        st.sidebar.caption("Fix the file, or tick **Re-configure column mapping** above.")
         return
     if unknown:
-        st.sidebar.warning(
-            f"{len(unknown)} unmapped ISIN(s): {', '.join(unknown)}. "
-            "Map them once via the CLI (`portfolio import <file>`), then re-upload."
-        )
+        st.sidebar.warning(f"{len(unknown)} unmapped ISIN(s) — map them below to continue.")
+        _render_isin_form(unknown, config)
         return
 
     st.sidebar.caption(f"{len(new_rows)} new · {len(duplicates)} duplicate(s) skipped")
@@ -497,6 +533,88 @@ def _render_import_sidebar() -> None:
     ]
     append_transactions(TX_PATH, txs)
     _after_write()
+
+
+def _render_profile_form(headers: list[str], records: list[dict]) -> None:
+    """Live (non-form) column-mapping UI. The action-column selectbox reruns so
+    its distinct values can be classified. Saves the profile to config."""
+    st.sidebar.caption("Map your CSV columns — saved to config for next time.")
+
+    columns: dict[str, str] = {}
+    for field in IMPORT_FIELDS:
+        guess = guess_column(field, headers)
+        idx = headers.index(guess) if guess in headers else 0
+        columns[field] = st.sidebar.selectbox(field, headers, index=idx, key=f"map_{field}")
+
+    cur_guess = guess_column("currency", headers)
+    cur_options = [NO_CURRENCY, *headers]
+    cur_idx = cur_options.index(cur_guess) if cur_guess in headers else 0
+    currency = st.sidebar.selectbox("currency", cur_options, index=cur_idx, key="map_currency")
+
+    sample = str(records[0].get(columns["price"], "")) if records else ""
+    dec_opts = ["dot", "comma"]
+    decimal = st.sidebar.radio(
+        "Decimal style", dec_opts,
+        index=dec_opts.index(suggest_decimal(sample)),
+        format_func=lambda d: "1,234.56 (dot)" if d == "dot" else "1.234,56 (comma)",
+        key="map_decimal",
+    )
+    date_format = st.sidebar.text_input("Date format", value="auto", key="map_datefmt")
+
+    values = distinct_actions(records, columns["action"])
+    actions: dict[str, str] = {}
+    if values:
+        st.sidebar.caption("Classify each action value:")
+        for v in values:
+            choice = st.sidebar.selectbox(f"{v!r} →", ["buy", "sell"], key=f"map_act_{v}")
+            actions[v.lower()] = choice
+    else:
+        st.sidebar.warning("No action values found in that column.")
+
+    if not st.sidebar.button("Save mapping", key="map_save", disabled=not values):
+        return
+    if currency != NO_CURRENCY:
+        columns["currency"] = currency
+    set_import_profile(CONFIG_PATH, {
+        "columns": columns,
+        "decimal": decimal,
+        "date_format": date_format.strip() or "auto",
+        "actions": actions,
+    })
+    st.session_state.pop("import_remap", None)
+    st.toast("Import profile saved", icon="✅")
+    st.rerun()
+
+
+def _render_isin_form(unknown: list[str], config) -> None:
+    """Map each unknown ISIN to a yfinance ticker + category, then save."""
+    categories = sorted(config.categories.keys())
+    entries: dict[str, tuple[str, str]] = {}
+    for isin in unknown:
+        ticker = st.sidebar.text_input(
+            f"{isin} → ticker", key=f"isin_t_{isin}", placeholder="e.g. IWDA.AS",
+        )
+        category = st.sidebar.selectbox(
+            "category", categories, key=f"isin_c_{isin}",
+        )
+        entries[isin] = (ticker.strip(), category)
+
+    if not st.sidebar.button("Save ISIN mapping", key="isin_save"):
+        return
+    missing = [isin for isin, (t, _) in entries.items() if not t]
+    if missing:
+        st.sidebar.error(f"Ticker required for: {', '.join(missing)}")
+        return
+    for isin, (ticker, category) in entries.items():
+        try:
+            add_category_ticker(CONFIG_PATH, category, ticker)
+        except ValidationError as e:
+            if "already in category" not in str(e):
+                st.sidebar.error(str(e))
+                return
+        set_isin_map_entry(CONFIG_PATH, isin, ticker)
+    st.toast("ISIN mapping saved", icon="✅")
+    st.rerun()
 
 
 def _render_income(report: IncomeReport, names: dict[str, str], tax: TaxConfig) -> None:

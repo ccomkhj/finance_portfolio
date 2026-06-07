@@ -6,9 +6,12 @@ from app import (
     SENTINEL,
     build_income_rows,
     build_status_markdown,
+    distinct_actions,
+    guess_column,
     is_read_only_mode,
     prepare_import,
     resolve_buy_ticker,
+    suggest_decimal,
 )
 from portfolio.config import Category, Config
 from portfolio.importer import ImportProfile, dedupe_key
@@ -168,6 +171,35 @@ def test_prepare_import_skips_duplicate_against_existing():
     )
     assert new_rows == []
     assert len(duplicates) == 1
+
+
+def test_guess_column_matches_known_aliases():
+    headers = ["Datum", "ISIN", "Richtung", "Anzahl", "Kurs", "Währung"]
+    assert guess_column("date", headers) == "Datum"
+    assert guess_column("isin", headers) == "ISIN"
+    assert guess_column("action", headers) == "Richtung"
+    assert guess_column("quantity", headers) == "Anzahl"
+    assert guess_column("price", headers) == "Kurs"
+    assert guess_column("currency", headers) == "Währung"
+
+
+def test_guess_column_returns_none_when_no_alias():
+    assert guess_column("date", ["foo", "bar"]) is None
+
+
+def test_distinct_actions_dedupes_case_insensitively_in_order():
+    records = [{"side": "Buy"}, {"side": "SELL"}, {"side": "buy"}, {"side": ""}]
+    assert distinct_actions(records, "side") == ["Buy", "SELL"]
+
+
+@pytest.mark.parametrize("sample,expected", [
+    ("1.234,56", "comma"),
+    ("1,234.56", "dot"),
+    ("98.50", "dot"),
+    ("98,50", "comma"),
+])
+def test_suggest_decimal(sample, expected):
+    assert suggest_decimal(sample) == expected
 
 
 @pytest.mark.parametrize("raw", ["1", "true", "TRUE", "yes", "on"])
