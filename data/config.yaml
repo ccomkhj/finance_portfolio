@@ -1,24 +1,35 @@
 base_currency: EUR
 
-# Synthetic demo portfolio. Replace this file with your own categories, tickers,
-# target weights, cash balance, and tax assumptions.
+# Synthetic demo portfolio, shaped to the "bubble-aware balanced" baseline:
+# 35% equities (30% ETFs + 5% individual stocks), 35% bonds, 20% cash, 10% gold.
+# See docs/STRATEGY.md for the rationale and the crash-buying rule.
+# Replace this file with your own categories, tickers, target weights, cash
+# balance, and tax assumptions.
 categories:
+  # Global equity ETFs — broad-market, developed-world, value/quality.
   global-equity:
-    target_weight: 0.70
+    target_weight: 0.30
     tickers:
       - VWCE.DE
       - IWDA.AS
-  us-equity:
-    target_weight: 0.15
-    tickers:
       - IUSA.AS
       - VUSA.AS
+  # High-conviction single names only; no holding above ~2% of the portfolio.
+  individual-stocks:
+    target_weight: 0.05
+    tickers: []
+  # Govt / T-bill / investment-grade / inflation-linked bond ETFs.
   bonds:
-    target_weight: 0.10
+    target_weight: 0.35
     tickers:
       - EUNA.DE
+  # Crisis and currency hedge. Suggested EUR listing: 4GLD.DE (Xetra-Gold).
+  gold:
+    target_weight: 0.10
+    tickers: []
+  # Dry powder for drawdowns + emergency reserve. Held as cash_balance_eur.
   cash:
-    target_weight: 0.05
+    target_weight: 0.20
     tickers: []
 
 cash_balance_eur: 1250.00

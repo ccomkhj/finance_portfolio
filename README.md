@@ -43,14 +43,16 @@ uv run portfolio dashboard
 
 ## Real scenario
 
-The demo portfolio has five synthetic trades, EUR cash, and these targets:
+The demo portfolio has five synthetic trades, EUR cash, and targets shaped to
+the [bubble-aware balanced baseline](docs/STRATEGY.md):
 
-| Category | Target |
-| --- | ---: |
-| global-equity | 70% |
-| us-equity | 15% |
-| bonds | 10% |
-| cash | 5% |
+| Category | Target | Purpose |
+| --- | ---: | --- |
+| bonds | 35% | Stability, income, recession protection |
+| global-equity (ETFs) | 30% | Long-term diversified growth |
+| cash | 20% | Dry powder for drawdowns |
+| gold | 10% | Crisis and currency hedge |
+| individual-stocks | 5% | Optional high-conviction names |
 
 Running `uv run portfolio show` on the demo data produced:
 
@@ -63,10 +65,11 @@ VUSA.AS        5.0000     105.40     123.14       615.71      88.71   16.83%
 EUNA.DE       30.0000       4.80       4.91       147.30       3.30    2.29%
 
 CATEGORY         CURRENT %   TARGET %    DELTA EUR
-global-equity       50.98%     70.00%      1157.70
-us-equity           26.06%     15.00%      -673.53
-bonds                2.42%     10.00%       461.45
-cash                20.53%      5.00%      -945.62
+global-equity       77.05%     30.00%     -2863.96
+individual-stocks    0.00%      5.00%       304.38
+bonds                2.42%     35.00%      1983.33
+gold                 0.00%     10.00%       608.75
+cash                20.53%     20.00%       -32.50
 
 INCOME (gross)  economic ~6.27/mo (75.21/yr) · cash ~3.22/mo (38.67/yr)   [portfolio income for detail]
 ```
