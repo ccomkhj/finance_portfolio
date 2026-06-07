@@ -19,3 +19,6 @@ docs/superpowers/
 /CONTEXT-MAP.md
 /docs/adr/
 /docs/improvement-rubric.md
+
+# skill-creator eval scratch workspaces
+.claude/skills/*-workspace/
