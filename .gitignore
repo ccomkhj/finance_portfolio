@@ -28,3 +28,8 @@ docs/superpowers/
 
 # pair-consult session state
 .consult/
+
+tests/fixtures/*.pdf
+
+# Subagent-driven-development scratch
+.superpowers/

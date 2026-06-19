@@ -3,6 +3,8 @@ name: tune-income
 description: Use whenever the user wants to set up, enhance, or double-check the income estimate of this portfolio repo — the `income:`, `cash_interest_pct`, and `tax:` blocks in data/config.yaml that drive `portfolio income` (gross) and `portfolio income --net` (after-tax). Trigger on "estimate my dividends/interest", "my income shows 0 / n/a", "add a proxy", "set the cash interest rate", "show income net of tax", "set up Teilfreistellung", "is my income/tax config right?", "which distributing twin for <ETF>", or any request to verify/fix why an accumulating ETF reports no income or why the net figure looks off. Use this even when the user just says "check my income config" without naming the fields.
 ---
 
+> ⚠️ **Outdated.** The portfolio repo moved to a snapshot-based net-worth model (multiple institutions, ISIN categories, PDF ingest). This skill references the removed transaction/income CLI (`add-buy`, `add-sell`, `import`, `income`) and needs a rewrite. See `docs/superpowers/plans/2026-06-19-multi-source-networth.md`.
+
 # Tune income config
 
 The `portfolio income` command estimates portfolio income as two figures —

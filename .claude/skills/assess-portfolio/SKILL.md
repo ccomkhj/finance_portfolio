@@ -3,6 +3,8 @@ name: assess-portfolio
 description: Use when the user asks about their portfolio — state, drift, rebalancing, P&L, adding/selling positions, editing targets or cash balance, swapping tickers, or troubleshooting CLI errors. Wraps the `portfolio` CLI of this repo with a structured assessment template and reference docs for every common task.
 ---
 
+> ⚠️ **Outdated.** The portfolio repo moved to a snapshot-based net-worth model (multiple institutions, ISIN categories, PDF ingest). This skill references the removed transaction/income CLI (`add-buy`, `add-sell`, `import`, `income`) and needs a rewrite. See `docs/superpowers/plans/2026-06-19-multi-source-networth.md`.
+
 # Assess Portfolio
 
 ## When to use

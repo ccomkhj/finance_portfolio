@@ -1,6 +1,6 @@
 # portfolio
 
-> Local-first portfolio tracking for EU self-directed investors. Plain-text
+> Local-first net-worth tracker for EU self-directed investors. Plain-text
 > data, git history, CLI, and Streamlit dashboard. No account, no broker login,
 > no hosted personal data.
 
@@ -15,16 +15,22 @@
 
 ## What it does
 
-- Tracks buys and sells from `data/transactions.csv`.
-- Reads target weights, cash, ticker categories, income, and tax assumptions from
-  `data/config.yaml`.
-- Fetches prices, FX, names, and dividend yields through `yfinance`.
-- Shows market value, P&L, allocation drift, rebalance amounts, and income
-  estimates.
+- Tracks net worth across **multiple accounts** (e.g. Trade Republic, Trading
+  212, Commerzbank). Each account is one snapshot in `data/accounts/*.json`.
+- Ingests Trade Republic Net Worth PDFs (`portfolio ingest`), and lets you
+  **add other accounts by hand** in the dashboard (EUR value per holding).
+- Reads target weights and ISIN categories from `data/config.yaml`; edit
+  categories/weights and move holdings between categories in the dashboard.
+- Computes net worth from the EUR values you provide — no live prices, no
+  external API.
+- A **Global** view aggregates every account and shows allocation vs. your
+  target ratios; a per-account tab shows each broker on its own.
 - Runs locally, so your real holdings stay on your machine.
 
-The bundled `data/` files are synthetic demo data. See [DISCLAIMER.md](DISCLAIMER.md)
-before using this with real portfolio records.
+The bundled `data/` files are **synthetic demo data**. Your real data lives in
+a gitignored `data/private/` directory (see
+[Keep your data private](#keep-your-data-private)). See
+[DISCLAIMER.md](DISCLAIMER.md) before using this with real portfolio records.
 
 ## Quick start
 
@@ -38,84 +44,82 @@ uv run portfolio check
 uv run portfolio show
 ```
 
-Open the editable dashboard:
+Open the dashboard:
 
 ```bash
 uv run portfolio dashboard
 ```
 
-## Real scenario
+## Example
 
-The demo portfolio has five synthetic trades, EUR cash, and targets shaped to
-the [bubble-aware balanced baseline](docs/STRATEGY.md):
-
-| Category | Target | Purpose |
-| --- | ---: | --- |
-| bonds | 35% | Stability, income, recession protection |
-| global-equity (ETFs) | 30% | Long-term diversified growth |
-| cash | 20% | Dry powder for drawdowns |
-| gold | 10% | Crisis and currency hedge |
-| individual-stocks | 5% | Optional high-conviction names |
-
-Running `uv run portfolio show` on the demo data produced:
+`uv run portfolio show` on the bundled synthetic demo (two accounts):
 
 ```text
-TICKER            QTY    AVG EUR      PRICE    VALUE EUR    P&L EUR    P&L %
-VWCE.DE       10.0000      98.50     162.36      1623.60     638.60   64.83%
-IWDA.AS       12.0000      82.10     123.33      1479.96     494.76   50.22%
-IUSA.AS       15.0000      55.80      64.73       970.95     133.95   16.00%
-4GLD.DE        3.0000      72.00     121.12       363.36     147.36   68.22%
-VUSA.AS        5.0000     105.40     123.14       615.71      88.71   16.83%
-EUNA.DE       30.0000       4.80       4.91       147.30       3.30    2.29%
+NET WORTH: 5,000.00 EUR
 
-CATEGORY         CURRENT %   TARGET %    DELTA EUR
-global-equity       72.71%     30.00%     -2754.96
-individual-stocks    0.00%      5.00%       322.54
-bonds                2.28%     35.00%      2110.51
-gold                 5.63%     10.00%       281.73
-cash                19.38%     20.00%        40.18
+ACCOUNT           AS OF              TOTAL EUR
+trade_republic    2026-01-15          3,200.00
+trading_212       2026-01-15          1,800.00
 
-INCOME (gross)  economic ~6.27/mo (75.21/yr) · cash ~3.22/mo (38.67/yr)   [portfolio income for detail]
+CATEGORY            CURRENT %  TARGET %     DELTA EUR
+global-equity          34.00%    50.00%        800.00
+bonds                  10.00%    20.00%        500.00
+gold                    6.00%    10.00%        200.00
+cash                   50.00%    20.00%     -1,500.00
 ```
 
 `DELTA EUR` is the category-level rebalance amount: positive means buy more of
-that category, negative means reduce it. Prices and yields are live, so your
-numbers will change.
+that category, negative means reduce it.
+
+## Keep your data private
+
+The repo is public, so **never put real holdings in the committed `data/`
+directory.** Instead keep them in `data/private/`, which is gitignored, and
+point the tools at it with the `PORTFOLIO_DATA_DIR` environment variable:
+
+```bash
+# one-time: create your private data dir from the demo as a starting point
+mkdir -p data/private/accounts
+cp data/config.yaml data/private/config.yaml
+
+# then run everything against it — nothing here is ever tracked by git
+export PORTFOLIO_DATA_DIR=data/private
+uv run portfolio show
+uv run portfolio dashboard
+```
+
+`PORTFOLIO_DATA_DIR` resolves the data directory for both the CLI and the
+dashboard (default: `data/`, the synthetic demo). Because `data/private/` is in
+`.gitignore`, your real `config.yaml` and `accounts/*.json` stay on your
+machine. `.gitignore` also excludes `data/*.bak` and `broker_exports/`.
+
+> Tip: add `export PORTFOLIO_DATA_DIR=data/private` to your shell profile so you
+> never have to remember it.
 
 ## Use your own portfolio
 
-1. Start fresh:
+With `PORTFOLIO_DATA_DIR` set to your private dir (above):
+
+1. Initialise a fresh config (writes into your private dir):
 
    ```bash
    uv run portfolio init --force
    ```
 
-2. Add tickers to categories in the dashboard's **Edit** tab, or edit
-   `data/config.yaml`.
+2. Add an account — upload a Trade Republic Net Worth PDF in the dashboard
+   sidebar (or `uv run portfolio ingest path/to/networth.pdf`), or add a manual
+   account in **Settings → Add account** and enter its cash + holdings on its
+   tab.
 
-3. Add trades:
+3. Assign ISIN categories and target weights in the dashboard's **Settings**
+   tab (or edit `config.yaml`).
 
-   ```bash
-   uv run portfolio add-buy VWCE.DE 10 98.50
-   uv run portfolio add-sell VWCE.DE 2 120.00
-   ```
-
-4. Or import a broker CSV:
-
-   ```bash
-   uv run portfolio import path/to/trades.csv
-   ```
-
-5. Validate and inspect:
+4. Validate and inspect:
 
    ```bash
    uv run portfolio check
    uv run portfolio show
-   uv run portfolio income --net
    ```
-
-Keep real broker exports and portfolio data out of public repos. `.gitignore`
-already excludes `data/private/`, `data/*.bak`, and `broker_exports/`.
 
 ## Public demo
 
@@ -129,21 +133,24 @@ point a new app at your fork:
   not read a `runtime.txt`; the app requires 3.12+).
 - **Sharing:** set to **Public** so logged-out visitors can open it.
 
-The entrypoint sets `PORTFOLIO_READ_ONLY=1`, so the demo uses the bundled
-synthetic data and hides the Edit tab — no writes are exposed. Streamlit Cloud
-installs the pinned dependencies from `requirements.txt` (it does not read
-`pyproject.toml`). When live prices are unavailable (e.g. Yahoo throttling the
-shared cloud IP), the demo falls back to `data/demo_snapshot.json` and labels the
-prices as sample data, so the dashboard always renders.
+The entrypoint sets `PORTFOLIO_READ_ONLY=1` (and does **not** set
+`PORTFOLIO_DATA_DIR`), so the demo uses the committed synthetic `data/` and hides
+all account-editing and Settings controls — no writes are exposed and no real
+data ships. Streamlit Cloud installs the pinned dependencies from
+`requirements.txt`.
 
 For public launch and revenue notes, see [docs/PUBLIC_LAUNCH.md](docs/PUBLIC_LAUNCH.md).
 
 ## Data files
 
-- `data/transactions.csv`: date, ticker, buy/sell, quantity, price, currency.
-- `data/config.yaml`: target weights, ticker categories, cash, income proxies,
-  and tax assumptions.
-- `data/.price_cache.json`: local price cache, ignored by git.
+- `data/accounts/*.json`: per-broker snapshots created by `portfolio ingest`.
+  Each file contains one snapshot with holdings (ISIN, name, quantity, EUR
+  value) and cash balance.
+- `data/config.yaml`: target weights, ISIN-to-category mapping, and optional
+  ISIN display names.
+- `data/private/`: **your** real `config.yaml` + `accounts/*.json`, gitignored.
+  Selected via `PORTFOLIO_DATA_DIR=data/private` (see
+  [Keep your data private](#keep-your-data-private)).
 
 ## Develop
 

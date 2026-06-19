@@ -1,0 +1,25 @@
+{
+  "source": "trading_212",
+  "as_of": "2026-01-15",
+  "account_ref": "demo",
+  "currency": "EUR",
+  "cash_eur": 500.0,
+  "holdings": [
+    {
+      "isin": "IE00BK5BQT80",
+      "name": "Vanguard FTSE All-World",
+      "quantity": 8.0,
+      "price": 100.0,
+      "value_eur": 800.0
+    },
+    {
+      "isin": "IE00B4WXJJ64",
+      "name": "iShares Core Global Aggregate Bond",
+      "quantity": 20.0,
+      "price": 25.0,
+      "value_eur": 500.0
+    }
+  ],
+  "brokerage_total_eur": 1300.0,
+  "total_eur": 1800.0
+}

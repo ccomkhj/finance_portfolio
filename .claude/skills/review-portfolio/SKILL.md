@@ -3,6 +3,8 @@ name: review-portfolio
 description: Use when the user wants a holistic, conversational review of their portfolio — "walk me through my portfolio", "how am I doing overall", "give me an overview and some advice", "what should I be thinking about", a periodic check-in, or a goal/risk gut-check. Runs a short guided Q&A (horizon, drawdown comfort, goal) every session, then synthesizes the live snapshot and income audit into a plain-language overview with prioritized, interpretive advice — and journals each review with a date so it can recall what you expected last time and flag what changed. Use this even when the user just says "review my portfolio" or "let's do a check-in" without naming metrics. NOT for one-off mutations (add/sell, edit targets), structured drift tables, or income/tax config — those belong to assess-portfolio and tune-income.
 ---
 
+> ⚠️ **Outdated.** The portfolio repo moved to a snapshot-based net-worth model (multiple institutions, ISIN categories, PDF ingest). This skill references the removed transaction/income CLI (`add-buy`, `add-sell`, `import`, `income`) and needs a rewrite. See `docs/superpowers/plans/2026-06-19-multi-source-networth.md`.
+
 # Review Portfolio
 
 A guided, conversational portfolio review. Where `assess-portfolio` answers pointed

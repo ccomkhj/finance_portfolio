@@ -1,55 +1,22 @@
 base_currency: EUR
 
-# Synthetic demo portfolio, shaped to the "bubble-aware balanced" baseline:
-# 35% equities (30% ETFs + 5% individual stocks), 35% bonds, 20% cash, 10% gold.
-# See docs/STRATEGY.md for the rationale and the crash-buying rule.
-# Replace this file with your own categories, tickers, target weights, cash
-# balance, and tax assumptions.
+# SYNTHETIC demo config for the public read-only dashboard. Not real holdings.
+# Run locally against your own data with PORTFOLIO_DATA_DIR=data/private (see README).
 categories:
-  # Global equity ETFs — broad-market, developed-world, value/quality.
   global-equity:
-    target_weight: 0.30
-    tickers:
-      - VWCE.DE
-      - IWDA.AS
-      - IUSA.AS
-      - VUSA.AS
-  # Dry target — 5% reserved for high-conviction single names, no holding above
-  # ~2% of the portfolio. The demo intentionally holds none yet.
-  individual-stocks:
-    target_weight: 0.05
-    tickers: []
-  # Govt / T-bill / investment-grade / inflation-linked bond ETFs.
+    target_weight: 0.50
+    isins: [IE00B4L5Y983, IE00BK5BQT80]
   bonds:
-    target_weight: 0.35
-    tickers:
-      - EUNA.DE
-  # Crisis and currency hedge.
+    target_weight: 0.20
+    isins: [IE00B4WXJJ64]
   gold:
     target_weight: 0.10
-    tickers:
-      - 4GLD.DE
-  # Dry powder for drawdowns + emergency reserve. Held as cash_balance_eur.
+    isins: [IE00B4ND3602]
   cash:
     target_weight: 0.20
-    tickers: []
-
-cash_balance_eur: 1250.00
-cash_interest_pct: 2.0
-
-income:
-  VWCE.DE:
-    proxy: VWRL.AS
-  IWDA.AS:
-    proxy: IWRD.AS
-  EUNA.DE:
-    yield_pct: 2.4
-  4GLD.DE:
-    yield_pct: 0.0
-
-tax:
-  rate_pct: 26.375
-  default_teilfreistellung: equity
-  teilfreistellung:
-    EUNA.DE: none
-    4GLD.DE: none
+    isins: []
+isin_names:
+  IE00B4L5Y983: iShares Core MSCI World
+  IE00BK5BQT80: Vanguard FTSE All-World
+  IE00B4WXJJ64: iShares Core Global Aggregate Bond
+  IE00B4ND3602: iShares Physical Gold

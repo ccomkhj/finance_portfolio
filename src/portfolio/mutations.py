@@ -1,62 +1,15 @@
 from __future__ import annotations
 
-from datetime import date as Date
 from pathlib import Path
 from typing import Any, cast
 
 import yaml
 
-from portfolio.config import load_config, WEIGHT_SUM_TOLERANCE
-from portfolio.positions import compute_positions, enrich_transactions_with_eur
-from portfolio.transactions import REQUIRED_COLUMNS, Transaction, append_transaction, load_transactions
+from portfolio.config import WEIGHT_SUM_TOLERANCE
 
 
 class ValidationError(ValueError):
     """Raised when a mutation is rejected before any file is written."""
-
-
-def record_transaction(
-    *,
-    tx_path: Path,
-    config_path: Path,
-    tx_date: Date,
-    ticker: str,
-    action: str,
-    quantity: float,
-    price: float,
-    currency: str,
-) -> None:
-    config = load_config(config_path)
-    if ticker not in config.all_tickers():
-        raise ValidationError(
-            f"ticker {ticker!r} not in config. Add it to a category first."
-        )
-    if action == "sell":
-        _assert_sell_within_holding(tx_path, ticker, quantity)
-
-    tx = Transaction(
-        date=tx_date,
-        ticker=ticker,
-        action=action,
-        quantity=quantity,
-        price=price,
-        currency=currency,
-    )
-    try:
-        append_transaction(tx_path, tx)
-    except ValueError as e:
-        raise ValidationError(str(e)) from e
-
-
-def _assert_sell_within_holding(tx_path: Path, ticker: str, quantity: float) -> None:
-    tx_df = load_transactions(tx_path)
-    enriched = enrich_transactions_with_eur(tx_df, lambda _c, _d: 1.0)
-    positions = compute_positions(enriched)
-    held = next((p.quantity for p in positions if p.ticker == ticker), 0.0)
-    if quantity > held + 1e-9:
-        raise ValidationError(
-            f"sell of {quantity} {ticker} exceeds held {held}"
-        )
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -67,24 +20,14 @@ def _write_yaml(path: Path, data: dict[str, Any]) -> None:
     path.write_text(yaml.safe_dump(data, sort_keys=False, default_flow_style=False))
 
 
-def set_cash(config_path: Path, amount_eur: float) -> None:
-    if amount_eur < 0:
-        raise ValidationError(f"cash_balance_eur must be >= 0, got {amount_eur}")
-    data = _read_yaml(config_path)
-    data["cash_balance_eur"] = float(amount_eur)
-    _write_yaml(config_path, data)
-
-
 def set_target_weights(config_path: Path, weights: dict[str, float]) -> None:
     data = _read_yaml(config_path)
     existing = set(data["categories"].keys())
     given = set(weights.keys())
     if existing != given:
-        missing = existing - given
-        extra = given - existing
         raise ValidationError(
             f"weights must cover exactly these categories: "
-            f"missing={sorted(missing)}, extra={sorted(extra)}"
+            f"missing={sorted(existing - given)}, extra={sorted(given - existing)}"
         )
     total = sum(weights.values())
     if abs(total - 1.0) > WEIGHT_SUM_TOLERANCE:
@@ -96,106 +39,140 @@ def set_target_weights(config_path: Path, weights: dict[str, float]) -> None:
     _write_yaml(config_path, data)
 
 
-def set_category_tickers(config_path: Path, category: str, tickers: list[str]) -> None:
+def set_category_isins(config_path: Path, category: str, isins: list[str]) -> None:
     data = _read_yaml(config_path)
     if category not in data["categories"]:
         raise ValidationError(f"unknown category {category!r}")
     for other_name, other in data["categories"].items():
         if other_name == category:
             continue
-        conflict = set(tickers) & set(other.get("tickers") or [])
+        conflict = set(isins) & set(other.get("isins") or [])
         if conflict:
             raise ValidationError(
-                f"tickers {sorted(conflict)} already in category {other_name!r}"
+                f"ISINs {sorted(conflict)} already in category {other_name!r}"
             )
-    data["categories"][category]["tickers"] = list(tickers)
+    data["categories"][category]["isins"] = list(isins)
     _write_yaml(config_path, data)
 
 
-def add_category_ticker(config_path: Path, category: str, ticker: str) -> None:
+def add_category_isin(config_path: Path, category: str, isin: str) -> None:
     data = _read_yaml(config_path)
     if category not in data["categories"]:
         raise ValidationError(f"unknown category {category!r}")
     for name, body in data["categories"].items():
-        if ticker in (body.get("tickers") or []):
-            raise ValidationError(f"ticker {ticker!r} already in category {name!r}")
-    current = list(data["categories"][category].get("tickers") or [])
-    current.append(ticker)
-    data["categories"][category]["tickers"] = current
+        if isin in (body.get("isins") or []):
+            raise ValidationError(f"ISIN {isin!r} already in category {name!r}")
+    current = list(data["categories"][category].get("isins") or [])
+    current.append(isin)
+    data["categories"][category]["isins"] = current
     _write_yaml(config_path, data)
 
 
-def read_import_profile(config_path: Path) -> dict[str, Any] | None:
+def set_isin_name(config_path: Path, isin: str, name: str) -> None:
     data = _read_yaml(config_path)
-    profile = data.get("import_profile")
-    return cast("dict[str, Any]", profile) if profile is not None else None
-
-
-def set_import_profile(config_path: Path, profile: dict[str, Any]) -> None:
-    data = _read_yaml(config_path)
-    data["import_profile"] = profile
+    names = dict(data.get("isin_names") or {})
+    names[isin] = name
+    data["isin_names"] = names
     _write_yaml(config_path, data)
 
 
-def read_isin_map(config_path: Path) -> dict[str, str]:
-    data = _read_yaml(config_path)
-    return dict(data.get("isin_map") or {})
+def add_category(config_path: Path, name: str) -> None:
+    """Add a new, empty category at 0% target weight.
 
-
-def set_isin_map_entry(config_path: Path, isin: str, ticker: str) -> None:
+    0% keeps the weight sum at 1.0 (load_config's invariant); redistribute with
+    set_target_weights afterwards.
+    """
+    name = name.strip()
+    if not name:
+        raise ValidationError("category name is required")
     data = _read_yaml(config_path)
-    m = dict(data.get("isin_map") or {})
-    m[isin] = ticker
-    data["isin_map"] = m
+    if name in data["categories"]:
+        raise ValidationError(f"category {name!r} already exists")
+    data["categories"][name] = {"target_weight": 0.0, "isins": []}
     _write_yaml(config_path, data)
 
 
-def _detect_clobber(config_path: Path, tx_path: Path) -> str | None:
-    """Return a human-readable error message if init_config would refuse
-    without force, or None if it's safe to proceed.
+def move_isin(config_path: Path, isin: str, to_category: str) -> None:
+    """Move an ISIN to `to_category`, removing it from any category that holds it.
 
-    Used both by init_config (to enforce) and by the CLI (to pre-flight
-    before prompting the user)."""
+    Works for both uncategorized ISINs and ones already assigned elsewhere.
+    Touches no weights, so the sum-to-1.0 invariant is preserved.
+    """
+    isin = isin.strip()
+    if not isin:
+        raise ValidationError("ISIN is required")
+    data = _read_yaml(config_path)
+    cats = data["categories"]
+    if to_category not in cats:
+        raise ValidationError(f"unknown category {to_category!r}")
+    for body in cats.values():
+        current = list(body.get("isins") or [])
+        if isin in current:
+            current.remove(isin)
+            body["isins"] = current
+    target = list(cats[to_category].get("isins") or [])
+    if isin not in target:
+        target.append(isin)
+    cats[to_category]["isins"] = target
+    _write_yaml(config_path, data)
+
+
+def rename_category(config_path: Path, old: str, new: str) -> None:
+    """Rename a category, carrying its ISINs and target weight."""
+    new = new.strip()
+    if not new:
+        raise ValidationError("new category name is required")
+    data = _read_yaml(config_path)
+    cats = data["categories"]
+    if old not in cats:
+        raise ValidationError(f"unknown category {old!r}")
+    if new == old:
+        return
+    if new in cats:
+        raise ValidationError(f"category {new!r} already exists")
+    data["categories"] = {(new if k == old else k): v for k, v in cats.items()}
+    _write_yaml(config_path, data)
+
+
+def remove_category(config_path: Path, name: str) -> None:
+    """Delete a category. Only allowed when it is empty and at 0% weight, so the
+    weight sum stays 1.0."""
+    data = _read_yaml(config_path)
+    cats = data["categories"]
+    if name not in cats:
+        raise ValidationError(f"unknown category {name!r}")
+    body = cats[name]
+    if body.get("isins"):
+        raise ValidationError(
+            f"category {name!r} is not empty; move its holdings out first"
+        )
+    if abs(float(body.get("target_weight", 0.0))) > WEIGHT_SUM_TOLERANCE:
+        raise ValidationError(
+            f"category {name!r} has non-zero weight; set it to 0% first"
+        )
+    del cats[name]
+    _write_yaml(config_path, data)
+
+
+def _detect_clobber(config_path: Path) -> str | None:
     if config_path.exists():
         try:
             raw = _read_yaml(config_path)
         except Exception:
             return f"config {config_path} is non-empty/unparseable"
-        if not isinstance(raw, dict):
-            return f"config {config_path} is non-empty/unparseable"
-        if "categories" not in raw:
-            return f"config {config_path} is non-empty (no 'categories' key)"
-        existing = raw.get("categories") or {}
-        if existing:
-            n = len(existing)
+        if isinstance(raw, dict) and (raw.get("categories") or {}):
+            n = len(raw["categories"])
             return f"config {config_path} has {n} categor{'y' if n == 1 else 'ies'}"
-    if tx_path.exists():
-        non_header = [ln for ln in tx_path.read_text().splitlines()[1:] if ln.strip()]
-        if non_header:
-            return f"transactions {tx_path} has {len(non_header)} row(s)"
     return None
 
 
 def init_config(
     *,
     config_path: Path,
-    tx_path: Path,
-    cash_balance_eur: float,
+    accounts_dir: Path,
     categories: list[tuple[str, float]],
     force: bool = False,
 ) -> None:
-    """Wipe and re-initialise config.yaml and transactions.csv.
-
-    Validates inputs, refuses to clobber non-empty existing files unless force=True
-    (in which case existing files are renamed to <name>.bak), then writes a fresh
-    config.yaml and a header-only transactions.csv.
-
-    `categories` is a list of (name, weight_fraction) in display order. Weights
-    must be in [0, 1] and sum to 1.0 ± WEIGHT_SUM_TOLERANCE.
-    """
-    # --- Input validation ---
-    if cash_balance_eur < 0:
-        raise ValidationError(f"cash_balance_eur must be >= 0, got {cash_balance_eur}")
     if not categories:
         raise ValidationError("must provide at least one category")
     names = [n for n, _ in categories]
@@ -208,32 +185,21 @@ def init_config(
     if abs(total - 1.0) > WEIGHT_SUM_TOLERANCE:
         raise ValidationError(f"weights sum to {total:.6f}, expected 1.0")
 
-    # --- Clobber check ---
     if not force:
-        msg = _detect_clobber(config_path, tx_path)
+        msg = _detect_clobber(config_path)
         if msg:
             raise ValidationError(
-                f"{msg}; pass force=True to overwrite (existing file will be backed up to .bak)"
+                f"{msg}; pass force=True to overwrite (backed up to .bak)"
             )
+    if force and config_path.exists():
+        (config_path.parent / (config_path.name + ".bak")).write_text(config_path.read_text())
 
-    # --- Backup on force ---
-    if force:
-        if config_path.exists():
-            (config_path.parent / (config_path.name + ".bak")).write_text(config_path.read_text())
-        if tx_path.exists():
-            (tx_path.parent / (tx_path.name + ".bak")).write_text(tx_path.read_text())
-
-    # --- Write new files ---
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    new_config = {
+    _write_yaml(config_path, {
         "base_currency": "EUR",
         "categories": {
-            name: {"target_weight": float(w), "tickers": []}
-            for name, w in categories
+            name: {"target_weight": float(w), "isins": []} for name, w in categories
         },
-        "cash_balance_eur": float(cash_balance_eur),
-    }
-    _write_yaml(config_path, new_config)
-
-    tx_path.parent.mkdir(parents=True, exist_ok=True)
-    tx_path.write_text(",".join(REQUIRED_COLUMNS) + "\n")
+        "isin_names": {},
+    })
+    accounts_dir.mkdir(parents=True, exist_ok=True)

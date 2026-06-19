@@ -1,0 +1,25 @@
+{
+  "source": "trade_republic",
+  "as_of": "2026-01-15",
+  "account_ref": "demo",
+  "currency": "EUR",
+  "cash_eur": 2000.0,
+  "holdings": [
+    {
+      "isin": "IE00B4L5Y983",
+      "name": "iShares Core MSCI World",
+      "quantity": 10.0,
+      "price": 90.0,
+      "value_eur": 900.0
+    },
+    {
+      "isin": "IE00B4ND3602",
+      "name": "iShares Physical Gold",
+      "quantity": 5.0,
+      "price": 60.0,
+      "value_eur": 300.0
+    }
+  ],
+  "brokerage_total_eur": 1200.0,
+  "total_eur": 3200.0
+}
