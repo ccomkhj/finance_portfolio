@@ -44,10 +44,17 @@ uv run portfolio check
 uv run portfolio show
 ```
 
-Open the dashboard:
+Open the dashboard (synthetic demo data):
 
 ```bash
 uv run portfolio dashboard
+```
+
+For your **own** data, use the helper script instead (see
+[Keep your data private](#keep-your-data-private)):
+
+```bash
+./dashboard.bash
 ```
 
 ## Example
@@ -93,8 +100,15 @@ dashboard (default: `data/`, the synthetic demo). Because `data/private/` is in
 `.gitignore`, your real `config.yaml` and `accounts/*.json` stay on your
 machine. `.gitignore` also excludes `data/*.bak` and `broker_exports/`.
 
-> Tip: add `export PORTFOLIO_DATA_DIR=data/private` to your shell profile so you
-> never have to remember it.
+The bundled **`./dashboard.bash`** wraps this — it sets
+`PORTFOLIO_DATA_DIR=data/private` and launches the dashboard, so you don't have
+to remember the env var:
+
+```bash
+./dashboard.bash
+```
+
+> Tip: or add `export PORTFOLIO_DATA_DIR=data/private` to your shell profile.
 
 ## Use your own portfolio
 
