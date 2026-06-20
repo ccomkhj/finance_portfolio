@@ -110,6 +110,37 @@ to remember the env var:
 
 > Tip: or add `export PORTFOLIO_DATA_DIR=data/private` to your shell profile.
 
+## Password-protect the dashboard
+
+If you host the dashboard somewhere reachable (Streamlit Community Cloud, a
+private server, a tunnel) and want it for your eyes only, set a password. When a
+password is configured the app shows a login prompt before anything else; when
+none is set it stays open (so the public read-only demo is unaffected).
+
+Pick whichever is convenient:
+
+- **Environment variable** (local runs / `dashboard.bash`):
+
+  ```bash
+  export PORTFOLIO_PASSWORD='my-secret'
+  ./dashboard.bash
+  ```
+
+- **Streamlit secrets** (works locally and on Streamlit Cloud). Copy
+  `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml` (gitignored) and
+  set:
+
+  ```toml
+  password = "my-secret"
+  ```
+
+  On Streamlit Community Cloud, paste that same line into the app's **Secrets**
+  box instead of committing a file.
+
+The entered password is compared in constant time and never stored in session
+state. This is a lightweight access gate — for a sensitive deployment also keep
+the app's **Sharing** private and serve it over HTTPS.
+
 ## Use your own portfolio
 
 With `PORTFOLIO_DATA_DIR` set to your private dir (above):

@@ -30,6 +30,17 @@ def test_read_only_env(monkeypatch):
     assert app.is_read_only_mode() is False
 
 
+def test_expected_password_from_env(monkeypatch):
+    monkeypatch.setenv("PORTFOLIO_PASSWORD", "  hunter2  ")
+    assert app.expected_password() == "hunter2"
+
+
+def test_expected_password_none_when_unset(monkeypatch):
+    monkeypatch.delenv("PORTFOLIO_PASSWORD", raising=False)
+    # No env var and no secrets.toml in the test env → app stays open.
+    assert app.expected_password() is None
+
+
 def test_rows_without_cash_drops_cash():
     cfg = Config("EUR", {
         "gold": Category("gold", 0.5, ("IE00B4ND3602",)),

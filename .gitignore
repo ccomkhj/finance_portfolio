@@ -15,6 +15,9 @@ __pycache__/
 /data/*.bak
 /data/private/
 /broker_exports/
+
+# Streamlit secrets (app password, etc.) — never commit real secrets
+.streamlit/secrets.toml
 docs/superpowers/
 
 # grill-with-docs artifacts

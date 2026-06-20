@@ -1,6 +1,7 @@
 # app.py
 from __future__ import annotations
 
+import hmac
 import os
 from datetime import datetime
 from pathlib import Path
@@ -28,10 +29,59 @@ DATA = Path(os.environ.get("PORTFOLIO_DATA_DIR", "data"))
 CONFIG_PATH = DATA / "config.yaml"
 ACCOUNTS_DIR = DATA / "accounts"
 READ_ONLY_ENV = "PORTFOLIO_READ_ONLY"
+PASSWORD_ENV = "PORTFOLIO_PASSWORD"
 
 
 def is_read_only_mode() -> bool:
     return os.environ.get(READ_ONLY_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def expected_password() -> str | None:
+    """The password the app is protected with, or None if it's open.
+
+    Looks at the ``PORTFOLIO_PASSWORD`` env var first (handy for local runs and
+    ``dashboard.bash``), then Streamlit secrets (``password = "..."`` in
+    ``.streamlit/secrets.toml`` or the Streamlit Cloud secrets UI). Returns None
+    when neither is set, so the public read-only demo keeps working without any
+    configuration.
+    """
+    env = os.environ.get(PASSWORD_ENV, "").strip()
+    if env:
+        return env
+    try:
+        secret = st.secrets.get("password")
+    except Exception:
+        secret = None
+    return str(secret) if secret else None
+
+
+def check_password() -> bool:
+    """Return True if the app may be shown, gating it behind a password.
+
+    When no password is configured the app is open. Otherwise a login form is
+    rendered and False is returned (callers should ``st.stop()``) until the
+    correct password is entered. The entered password is never persisted in
+    session state, and the comparison is constant-time.
+    """
+    password = expected_password()
+    if not password:
+        return True
+
+    if st.session_state.get("password_ok"):
+        return True
+
+    def _submit() -> None:
+        entered = st.session_state.get("password_input", "")
+        if hmac.compare_digest(entered, password):
+            st.session_state["password_ok"] = True
+            del st.session_state["password_input"]  # don't keep the secret around
+        else:
+            st.session_state["password_ok"] = False
+
+    st.text_input("Password", type="password", key="password_input", on_change=_submit)
+    if st.session_state.get("password_ok") is False:
+        st.error("😕 Incorrect password.")
+    return False
 
 
 def category_rows(nw: NetWorth) -> list[dict]:
@@ -85,6 +135,10 @@ def holding_options(config: Config, snaps: list[Snapshot]) -> list[tuple[str, st
 
 def main() -> None:
     st.set_page_config(page_title="Net worth", layout="wide")
+
+    if not check_password():
+        st.stop()
+
     st.title("Net worth")
 
     read_only = is_read_only_mode()
