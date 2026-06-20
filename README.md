@@ -141,6 +141,14 @@ The entered password is compared in constant time and never stored in session
 state. This is a lightweight access gate — for a sensitive deployment also keep
 the app's **Sharing** private and serve it over HTTPS.
 
+### Self-host on your own server
+
+To run the full editable dashboard against your real data on a server you
+control (recommended over a public cloud demo for real holdings), see
+[docs/DEPLOY_ORACLE.md](docs/DEPLOY_ORACLE.md) — a step-by-step guide for
+Oracle Cloud's Always Free tier with HTTPS via Caddy/Let's Encrypt. The
+`deploy/` directory has a ready-made systemd unit and Caddyfile.
+
 ## Use your own portfolio
 
 With `PORTFOLIO_DATA_DIR` set to your private dir (above):

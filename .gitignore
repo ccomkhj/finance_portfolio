@@ -18,6 +18,9 @@ __pycache__/
 
 # Streamlit secrets (app password, etc.) — never commit real secrets
 .streamlit/secrets.toml
+
+# Deployment env file (holds the real password) — keep the .example only
+deploy/portfolio.env
 docs/superpowers/
 
 # grill-with-docs artifacts

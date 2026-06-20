@@ -1,0 +1,29 @@
+# Streamlit dashboard, fronted by Caddy (HTTPS) on Oracle Cloud.
+# Copy to /etc/systemd/system/portfolio-dashboard.service and adjust the
+# User/paths if you didn't use the default `opc` user or clone location.
+#
+# The real password and data dir live in deploy/portfolio.env (gitignored) —
+# see deploy/portfolio.env.example.
+
+[Unit]
+Description=Portfolio Streamlit dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=opc
+WorkingDirectory=/home/opc/finance_portfolio
+EnvironmentFile=/home/opc/finance_portfolio/deploy/portfolio.env
+# Bind to localhost only; Caddy terminates TLS and proxies to it.
+ExecStart=/home/opc/.local/bin/uv run portfolio dashboard \
+    --server.address=127.0.0.1 \
+    --server.port=8501 \
+    --server.headless=true \
+    --server.enableCORS=false \
+    --server.enableXsrfProtection=true
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,10 @@
+# Caddy reverse proxy with automatic HTTPS (Let's Encrypt).
+# Copy to /etc/caddy/Caddyfile, replace the domain, then: systemctl reload caddy
+#
+# Caddy obtains and renews the TLS certificate automatically once the domain's
+# DNS A/AAAA record points at this server's public IP and ports 80+443 are open.
+# It also handles the WebSocket upgrade Streamlit needs — no extra config.
+
+dashboard.example.com {
+    reverse_proxy 127.0.0.1:8501
+}
